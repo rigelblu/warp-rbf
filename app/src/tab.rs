@@ -671,6 +671,73 @@ impl TabData {
         }
     }
 
+    /// Spike (#warp-33): nearest named color for a resolved swatch color, so we
+    /// can dogfood whether name-by-appearance beats the ANSI slot name. Redmean
+    /// RGB distance over an embedded CSS-ish palette. Abandon if names look off.
+    #[rustfmt::skip]
+    const NAMED_COLORS: &'static [(&'static str, (u8, u8, u8))] = &[
+        ("Black", (0, 0, 0)), ("White", (255, 255, 255)),
+        ("Red", (255, 0, 0)), ("Crimson", (220, 20, 60)), ("FireBrick", (178, 34, 34)),
+        ("DarkRed", (139, 0, 0)), ("Maroon", (128, 0, 0)), ("IndianRed", (205, 92, 92)),
+        ("Salmon", (250, 128, 114)), ("LightSalmon", (255, 160, 122)), ("Tomato", (255, 99, 71)),
+        ("Coral", (255, 127, 80)), ("OrangeRed", (255, 69, 0)), ("Orange", (255, 165, 0)),
+        ("DarkOrange", (255, 140, 0)), ("Gold", (255, 215, 0)), ("Yellow", (255, 255, 0)),
+        ("Khaki", (240, 230, 140)), ("Goldenrod", (218, 165, 32)), ("DarkGoldenrod", (184, 134, 11)),
+        ("Olive", (128, 128, 0)), ("OliveDrab", (107, 142, 35)), ("YellowGreen", (154, 205, 50)),
+        ("Chartreuse", (127, 255, 0)), ("Lime", (0, 255, 0)), ("LimeGreen", (50, 205, 50)),
+        ("LightGreen", (144, 238, 144)), ("Green", (0, 128, 0)), ("ForestGreen", (34, 139, 34)),
+        ("DarkGreen", (0, 100, 0)), ("SeaGreen", (46, 139, 87)), ("MediumSeaGreen", (60, 179, 113)),
+        ("SpringGreen", (0, 255, 127)), ("Teal", (0, 128, 128)), ("DarkCyan", (0, 139, 139)),
+        ("LightSeaGreen", (32, 178, 170)), ("Turquoise", (64, 224, 208)), ("Aquamarine", (127, 255, 212)),
+        ("Cyan", (0, 255, 255)), ("PaleTurquoise", (175, 238, 238)), ("CadetBlue", (95, 158, 160)),
+        ("SteelBlue", (70, 130, 180)), ("LightBlue", (173, 216, 230)), ("SkyBlue", (135, 206, 235)),
+        ("DeepSkyBlue", (0, 191, 255)), ("DodgerBlue", (30, 144, 255)), ("CornflowerBlue", (100, 149, 237)),
+        ("RoyalBlue", (65, 105, 225)), ("Blue", (0, 0, 255)), ("MediumBlue", (0, 0, 205)),
+        ("Navy", (0, 0, 128)), ("MidnightBlue", (25, 25, 112)), ("SlateBlue", (106, 90, 205)),
+        ("DarkSlateBlue", (72, 61, 139)), ("Indigo", (75, 0, 130)), ("BlueViolet", (138, 43, 226)),
+        ("DarkViolet", (148, 0, 211)), ("MediumPurple", (147, 112, 219)), ("Purple", (128, 0, 128)),
+        ("DarkMagenta", (139, 0, 139)), ("Magenta", (255, 0, 255)), ("Orchid", (218, 112, 214)),
+        ("MediumOrchid", (186, 85, 211)), ("Violet", (238, 130, 238)), ("Plum", (221, 160, 221)),
+        ("Thistle", (216, 191, 216)), ("Lavender", (230, 230, 250)), ("HotPink", (255, 105, 180)),
+        ("DeepPink", (255, 20, 147)), ("Pink", (255, 192, 203)), ("LightPink", (255, 182, 193)),
+        ("PaleVioletRed", (219, 112, 147)), ("MistyRose", (255, 228, 225)), ("Brown", (165, 42, 42)),
+        ("Sienna", (160, 82, 45)), ("SaddleBrown", (139, 69, 19)), ("Chocolate", (210, 105, 30)),
+        ("Peru", (205, 133, 63)), ("SandyBrown", (244, 164, 96)), ("Tan", (210, 180, 140)),
+        ("RosyBrown", (188, 143, 143)), ("Wheat", (245, 222, 179)), ("Beige", (245, 245, 220)),
+        ("Gray", (128, 128, 128)), ("DimGray", (105, 105, 105)), ("DarkGray", (169, 169, 169)),
+        ("Silver", (192, 192, 192)), ("LightGray", (211, 211, 211)), ("Gainsboro", (220, 220, 220)),
+        ("SlateGray", (112, 128, 144)), ("LightSlateGray", (119, 136, 153)), ("DarkSlateGray", (47, 79, 79)),
+    ];
+
+    fn nearest_color_name(c: ColorU) -> &'static str {
+        let (r, g, b) = (c.r as i64, c.g as i64, c.b as i64);
+        Self::NAMED_COLORS
+            .iter()
+            .min_by_key(|(_, (nr, ng, nb))| {
+                let (nr, ng, nb) = (*nr as i64, *ng as i64, *nb as i64);
+                let rmean = (r + nr) / 2;
+                let (dr, dg, db) = (r - nr, g - ng, b - nb);
+                // Redmean weighted-RGB distance (×256, integer), a cheap perceptual approximation.
+                (512 + rmean) * dr * dr + 1024 * dg * dg + (767 - rmean) * db * db
+            })
+            .map(|(name, _)| *name)
+            .unwrap_or("Color")
+    }
+
+    /// Spike (#warp-33): "CadetBlue" -> "Cadet Blue" for the swatch tooltip.
+    fn spaced_name(name: &str) -> String {
+        let mut out = String::with_capacity(name.len() + 2);
+        let mut prev_lower = false;
+        for ch in name.chars() {
+            if ch.is_uppercase() && prev_lower {
+                out.push(' ');
+            }
+            out.push(ch);
+            prev_lower = ch.is_lowercase();
+        }
+        out
+    }
+
     /// New dot-based color picker: default (no-color) + color options.
     /// Rendered as a single custom menu item with individually clickable dots.
     fn dot_color_option_menu_items(
@@ -708,7 +775,8 @@ impl TabData {
                         };
                         let tooltip = match ansi_id {
                             None => "Default (no color)".to_string(),
-                            Some(id) => id.to_string(),
+                            // Spike (#warp-33): name by nearest appearance, not ANSI slot.
+                            Some(_) => Self::spaced_name(Self::nearest_color_name(dot_color)),
                         };
 
                         let dot = render_color_dot(
@@ -1093,6 +1161,23 @@ impl<'a> TabComponent<'a> {
         self.tab_bar.is_any_tab_renaming && self.is_active_tab()
     }
 
+    fn effective_tab_background(&self) -> Option<ThemeFill> {
+        if self.is_tab_being_renamed() {
+            None
+        } else {
+            self.styles.background
+        }
+    }
+
+    fn effective_tab_foreground(&self, fallback: ColorU) -> ColorU {
+        match (self.is_active_tab(), self.effective_tab_background()) {
+            (true, Some(background)) => {
+                active_colored_tab_text(self.appearance.theme(), tab_color_solid(background))
+            }
+            _ => fallback,
+        }
+    }
+
     /// Determine if this tab is being dragged
     fn is_tab_dragging(&self) -> bool {
         self.tab.draggable_state.is_dragging()
@@ -1225,12 +1310,8 @@ impl<'a> TabComponent<'a> {
         // The active colored tab fills with a strong tint of its color (#warp-32
         // inversion), so its title text biases white to stay legible on saturated
         // mid-luminance fills; every other tab keeps its themed font color.
-        let font_color = match (self.is_active_tab(), self.styles.background) {
-            (true, Some(background)) => {
-                active_colored_tab_text(self.appearance.theme(), tab_color_solid(background))
-            }
-            _ => styles.font_color.expect("Font color is set"),
-        };
+        let font_color =
+            self.effective_tab_foreground(styles.font_color.expect("Font color is set"));
 
         if self.is_tab_being_renamed() {
             Align::new(
@@ -1303,8 +1384,9 @@ impl<'a> TabComponent<'a> {
                 ))
             });
 
-            // Create 100% opacity background for hover state
-            let hover_background = if let Some(custom_background) = self.styles.background {
+            // Create 100% opacity background for hover state.
+            let hover_background = if let Some(custom_background) = self.effective_tab_background()
+            {
                 match custom_background {
                     ThemeFill::Solid(color) => Fill::Solid(color),
                     ThemeFill::VerticalGradient(gradient) => {
@@ -1358,11 +1440,13 @@ impl<'a> TabComponent<'a> {
             // Pinned: render the pin in the exact slot the close button uses so
             // hovering swaps icons in place without changing the layout.
             let theme = self.appearance.theme();
+            let icon_color =
+                self.effective_tab_foreground(theme.main_text_color(theme.background()).into());
             ConstrainedBox::new(
                 Align::new(
                     ConstrainedBox::new(
                         Icon::PinFilledDiagonal
-                            .to_warpui_icon(theme.main_text_color(theme.background()))
+                            .to_warpui_icon(ThemeFill::Solid(icon_color))
                             .finish(),
                     )
                     .with_width(TAB_PIN_INDICATOR_ICON_SIZE)
@@ -1400,10 +1484,12 @@ impl<'a> TabComponent<'a> {
                 Container::new(
                     Rect::new()
                         .with_background_color(
-                            self.appearance
-                                .theme()
-                                .main_text_color(self.appearance.theme().background())
-                                .into(),
+                            self.effective_tab_foreground(
+                                self.appearance
+                                    .theme()
+                                    .main_text_color(self.appearance.theme().background())
+                                    .into(),
+                            ),
                         )
                         .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
                         .finish(),
@@ -1429,13 +1515,9 @@ impl<'a> TabComponent<'a> {
             ),
             Indicator::Maximized => Some(
                 Icon::Maximize
-                    .to_warpui_icon(
-                        self.styles
-                            .default
-                            .font_color
-                            .unwrap_or(ColorU::white())
-                            .into(),
-                    )
+                    .to_warpui_icon(ThemeFill::Solid(self.effective_tab_foreground(
+                        self.styles.default.font_color.unwrap_or(ColorU::white()),
+                    )))
                     .finish(),
             ),
             Indicator::Shell(shell_indicator_type) => Some(
@@ -1455,16 +1537,24 @@ impl<'a> TabComponent<'a> {
                         Some(status.render_icon(self.appearance).finish())
                     }
                 } else {
-                    let icon_color = self.appearance.theme().nonactive_ui_text_color();
-                    Some(Icon::Oz.to_warpui_icon(icon_color).finish())
+                    let icon_color = self.effective_tab_foreground(
+                        self.appearance.theme().nonactive_ui_text_color().into(),
+                    );
+                    Some(
+                        Icon::Oz
+                            .to_warpui_icon(ThemeFill::Solid(icon_color))
+                            .finish(),
+                    )
                 }
             }
             Indicator::AmbientAgent => {
                 // Always use the active tab font color for the ambient agent cloud icon, with a safe fallback.
                 let active_styles = self.styles.default.merge(self.styles.active);
-                let icon_color = active_styles
-                    .font_color
-                    .unwrap_or_else(|| self.appearance.theme().active_ui_text_color().into());
+                let icon_color = self.effective_tab_foreground(
+                    active_styles
+                        .font_color
+                        .unwrap_or_else(|| self.appearance.theme().active_ui_text_color().into()),
+                );
 
                 let ui_builder = self.ui_builder.clone();
                 let mouse_state = self.tab.indicator_hover_state.clone();
@@ -1527,13 +1617,16 @@ impl<'a> TabComponent<'a> {
         let theme = self.appearance.theme();
         let is_active = self.is_active_tab();
         let is_in_multi_tab_selection = self.is_in_multi_tab_selection;
+        let effective_tab_background = self.effective_tab_background();
+        let active_tab_foreground = self
+            .effective_tab_foreground(self.styles.default.font_color.unwrap_or(ColorU::white()));
 
         // Colored tab (#warp-32), mirroring the vertical panel's inversion: idle/
         // hover tabs keep a faint color tint behind a full-strength bottom accent
         // (identity); the active tab inverts — it fills with a strong tint of its
         // own color (the one vivid block), its bottom accent flips to a light/
         // contrasting edge, and its title text biases white (in `render_tab_content`).
-        let bottom_accent = self.styles.background.map(|fill| {
+        let bottom_accent = effective_tab_background.map(|fill| {
             let tab_color = tab_color_solid(fill);
             if is_active {
                 // Active: the whole tab is the color fill, so a same-color accent
@@ -1551,7 +1644,7 @@ impl<'a> TabComponent<'a> {
             }
         });
 
-        let background_color = if let Some(custom_background) = self.styles.background {
+        let background_color = if let Some(custom_background) = effective_tab_background {
             let tab_color = tab_color_solid(custom_background);
             if is_active {
                 // Active colored tab inverts: a strong fill of its own color — the
@@ -1635,13 +1728,7 @@ impl<'a> TabComponent<'a> {
             } else {
                 // Fallback to terminal icon if no indicator is present
                 Icon::Terminal
-                    .to_warpui_icon(
-                        self.styles
-                            .default
-                            .font_color
-                            .unwrap_or(ColorU::white())
-                            .into(),
-                    )
+                    .to_warpui_icon(ThemeFill::Solid(active_tab_foreground))
                     .finish()
             }
         };
@@ -1660,7 +1747,7 @@ impl<'a> TabComponent<'a> {
         )
         .finish();
 
-        let close_button_background = if let Some(custom_background) = self.styles.background {
+        let close_button_background = if let Some(custom_background) = effective_tab_background {
             match custom_background {
                 ThemeFill::Solid(color) => {
                     Fill::Solid(coloru_with_opacity(color, TAB_CLOSE_BUTTON_OPACITY))

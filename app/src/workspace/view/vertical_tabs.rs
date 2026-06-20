@@ -468,6 +468,7 @@ fn render_pane_row_element(
     content: Box<dyn Element>,
     theme: &WarpTheme,
 ) -> Box<dyn Element> {
+    let effective_pane_color = props.effective_pane_color();
     let detail_target = supports_vertical_tabs_detail_sidecar(&props.typed).then(|| {
         detail_target_for_hovered_row(
             props.pane_group_id,
@@ -492,7 +493,7 @@ fn render_pane_row_element(
         stack_position,
         is_in_multi_selection,
         is_in_multi_tab_selection,
-        pane_color,
+        pane_color: _,
         badge_mouse_states: _,
         detail_hover_state,
         display_granularity: _,
@@ -505,25 +506,12 @@ fn render_pane_row_element(
         is_pinned,
         container_is_hovered,
     } = props;
-    // While a tab/pane is being renamed, drop its color so the inline rename
-    // editor stays legible. An active colored tab fills its row with a strong tint
-    // of its color, but the shared rename `EditorView` draws with theme-default
-    // colors (the contrast-pick that adapts the row's own content doesn't reach
-    // it) — so neutralize the row for the rename: `pane_color` None makes it the
-    // neutral selected lift. The color returns when the rename ends. (warp-32
-    // rename-contrast; adapting the editor's own colors was rejected — it inherits
-    // the per-color readability edge cases.)
-    let pane_color = if is_tab_being_renamed || is_pane_being_renamed {
-        None
-    } else {
-        pane_color
-    };
     let is_selected = is_active_tab && is_focused;
     // Resting (non-hovered) row background, used to pick a readable pin-icon
     // color against a colored tab's background. The pin only shows when the row
     // is not hovered, so the resting background is the right basis.
     let effective_bg = pane_row_background(
-        pane_color,
+        effective_pane_color,
         is_selected,
         is_in_multi_selection,
         false,
@@ -544,7 +532,7 @@ fn render_pane_row_element(
             .with_corner_radius(corner_radius);
 
         if let Some(background) = pane_row_background(
-            pane_color,
+            effective_pane_color,
             is_selected,
             is_in_multi_selection,
             state.is_hovered(),
@@ -562,7 +550,7 @@ fn render_pane_row_element(
         // it reads as a divider against the fill instead of vanishing into it.
         // Uncolored tabs keep their existing 1px selected outline unchanged.
         let pane: Box<dyn Element> = container
-            .with_border(if let Some(color) = pane_color {
+            .with_border(if let Some(color) = effective_pane_color {
                 let strip_color = if is_selected {
                     theme
                         .sub_text_color(color.with_opacity(TAB_COLOR_ACTIVE_OPACITY))
@@ -3373,8 +3361,9 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
     let theme = appearance.theme();
     let font_family = appearance.ui_font_family();
     let is_selected = props.is_active_tab && props.is_focused;
-    let row_bg = pane_row_content_bg(props.pane_color, is_selected, theme);
-    let text_colors = pane_row_text_colors(props.pane_color, is_selected, theme);
+    let pane_color = props.effective_pane_color();
+    let row_bg = pane_row_content_bg(pane_color, is_selected, theme);
+    let text_colors = pane_row_text_colors(pane_color, is_selected, theme);
     let main_text_color = text_colors.main;
     let sub_text_color = text_colors.sub;
 
@@ -3853,6 +3842,17 @@ impl<'a> PaneProps<'a> {
             .unwrap_or(self.title.as_str())
     }
 
+    fn effective_pane_color(&self) -> Option<ThemeFill> {
+        // While a tab/pane is being renamed, drop its color so the shared inline
+        // `EditorView` renders on the neutral selected lift. Keep this as the
+        // single source of truth so row content and row paint agree.
+        if self.is_tab_being_renamed || self.is_pane_being_renamed {
+            None
+        } else {
+            self.pane_color
+        }
+    }
+
     fn shows_inline_tab_rename_editor(&self) -> bool {
         (self.is_tab_being_renamed && self.rename_editor.is_some())
             || (self.is_pane_being_renamed && self.pane_rename_editor.is_some())
@@ -4268,7 +4268,7 @@ fn render_terminal_row_content(
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
     let is_selected = props.is_active_tab && props.is_focused;
-    let text_colors = pane_row_text_colors(props.pane_color, is_selected, theme);
+    let text_colors = pane_row_text_colors(props.effective_pane_color(), is_selected, theme);
     let main_text_color = text_colors.main;
     let sub_text_color = text_colors.sub;
     let primary_info = *TabSettings::as_ref(app).vertical_tabs_primary_info.value();
@@ -4588,8 +4588,9 @@ fn render_summary_tab_item(
     let appearance = Appearance::as_ref(app);
     let theme = appearance.theme();
     let is_selected = props.is_active_tab && props.is_focused;
-    let row_bg = pane_row_content_bg(props.pane_color, is_selected, theme);
-    let text_colors = pane_row_text_colors(props.pane_color, is_selected, theme);
+    let pane_color = props.effective_pane_color();
+    let row_bg = pane_row_content_bg(pane_color, is_selected, theme);
+    let text_colors = pane_row_text_colors(pane_color, is_selected, theme);
     let main_text_color = text_colors.main;
     let sub_text_color = text_colors.sub;
     let icon = summary_pane_kind_icons
@@ -7106,8 +7107,9 @@ fn render_compact_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn El
     let appearance = Appearance::as_ref(app);
     let theme = appearance.theme();
     let is_selected = props.is_active_tab && props.is_focused;
-    let row_bg = pane_row_content_bg(props.pane_color, is_selected, theme);
-    let text_colors = pane_row_text_colors(props.pane_color, is_selected, theme);
+    let pane_color = props.effective_pane_color();
+    let row_bg = pane_row_content_bg(pane_color, is_selected, theme);
+    let text_colors = pane_row_text_colors(pane_color, is_selected, theme);
     let main_text_color = text_colors.main;
     let sub_text_color = text_colors.sub;
     let font_family = appearance.ui_font_family();

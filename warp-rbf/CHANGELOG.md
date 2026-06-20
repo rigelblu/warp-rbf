@@ -6,6 +6,13 @@ title: Changelog
 
 ---
 
+# 🔵⋯ v0.6.0 (2026-06-21)
+## 🟠⋯ Added
+- colored vertical tabs read clearly, and the active one is unmistakable | a colored tab shows a full-strength color stripe on its leading edge with a faint matching row tint; the active tab fills its row with a strong tint of its color — the one vivid block, with white text on saturated colors (#warp-32)
+- colored tabs in the horizontal tab bar match — the active one is unmistakable too | a colored tab in the top bar shows a full-strength color bar on its bottom edge with a faint matching tint; the active tab fills with a strong tint of its color — the one vivid block, with white text on saturated colors — and its bottom bar flips to a contrasting edge so it stays a clean divider (#warp-32)
+- renaming a colored tab stays legible | while you rename a colored tab, its row drops the color fill so the inline rename editor reads clearly against the theme's default text, then the color returns when you finish (#warp-32)
+- name the color of a tab on hover | hovering a tab's color swatch shows the nearest named color, so you can tell which color a tab is set to (#warp-32)
+
 # 🔵⋯ v0.5.0 (2026-06-21)
 ## 🟠⋯ Added
 - collapse or expand a pane into a thin edge rail | tuck a pane you're not using to a thin rail on its edge to reclaim its space without closing it — `⌥⇧`+`h`/`j`/`k`/`l` rails the neighbor (or a whole bordering column/row) in place, repeat presses sweep further, `⌥⇧E` expands the focused pane to fill the tab, and restore with the opposite key or a click (#warp-03)
