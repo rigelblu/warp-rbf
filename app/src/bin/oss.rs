@@ -21,6 +21,15 @@ fn main() -> Result<()> {
             mcp_static_config: None,
         },
     );
+    // WarpOss ships the upstream tab features that are preview/dogfood-gated
+    // elsewhere: tab groups, vertical tabs, and per-directory tab colors.
+    state = state.with_additional_features(&[
+        #[cfg(target_os = "macos")]
+        warp_core::features::FeatureFlag::GroupedTabs,
+        warp_core::features::FeatureFlag::VerticalTabs,
+        warp_core::features::FeatureFlag::DirectoryTabColors,
+    ]);
+
     if cfg!(debug_assertions) {
         state = state.with_additional_features(warp_core::features::DEBUG_FLAGS);
     }
