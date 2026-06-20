@@ -31,6 +31,9 @@ This is my ~~fork~~ flavour of [Warp](https://github.com/warpdotdev/Warp), simil
 — tuck a pane you're not using to a thin edge rail to reclaim its space without closing it.
 - `meta-shift-hjkl` rails the bordering pane · `meta-shift-E` expands the focused pane · click the rail or the opposite key restores
 
+**Colored tabs contrast improvements**
+— tell inactive tab colors apart, and see which colored tab is active at a glance.
+
 ## 🟠⋯ Settings, Themes, And Data
 Copy your regular warp configs
 ```
