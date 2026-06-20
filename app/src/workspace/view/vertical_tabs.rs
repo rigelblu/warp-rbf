@@ -14,6 +14,7 @@ use warp_core::context_flag::ContextFlag;
 use warp_core::telemetry::TelemetryEvent as _;
 use warp_core::ui::color::blend::Blend;
 use warp_core::ui::color::coloru_with_opacity;
+use warp_core::ui::color::contrast::relative_luminance;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill as WarpThemeFill, WarpTheme};
 use warp_core::ui::Icon as WarpIcon;
@@ -111,8 +112,26 @@ const DETAIL_SIDECAR_CORNER_RADIUS: f32 = 4.;
 /// Fixed height of the metadata row (line 3 in expanded mode). Matches the passive badge height
 /// so the row doesn't resize when badges are toggled.
 const METADATA_ROW_HEIGHT: f32 = BADGE_ICON_SIZE + 2.;
-const TAB_COLOR_OPACITY: Opacity = 15;
-const TAB_COLOR_HOVER_OPACITY: Opacity = 50;
+// Width of the opaque leading color strip that marks a colored tab (#warp-32).
+// Leading strip width, same on every colored row (#warp-32). On idle rows the
+// strip is the full-strength color (identity); on the active row the strip flips
+// to the contrasting/light color so it reads as a divider against the strong
+// color fill behind it. 6px — a 4px strip reads as two thin near-twin slivers for
+// close hues (e.g. rose-pine pine/foam, ~8° apart in hue).
+const TAB_COLOR_STRIP_WIDTH: f32 = 6.;
+
+// Faint color tint behind the strip on *idle* / *hover* colored rows (#warp-32),
+// for gentle color presence in the panel. Kept very low so it stays flavor, not
+// identity (the full-strength strip carries identity) and stays tame over a
+// background image.
+const TAB_COLOR_TINT_OPACITY: Opacity = 14; // idle
+const TAB_COLOR_TINT_HOVER_OPACITY: Opacity = 24; // hover
+
+// The *active* colored row inverts: instead of a neutral lift it fills the whole
+// row with a strong tint of its own color — the one vivid block in the panel. Kept
+// just under fully opaque so it still composites slightly over a background image
+// rather than reading as a flat paint chip, while staying bold enough to dominate.
+const TAB_COLOR_ACTIVE_OPACITY: Opacity = 90;
 
 // Circular icon constants
 const ICON_WITH_STATUS_GAP: f32 = 8.;
@@ -274,14 +293,9 @@ fn oz_icon_fill(theme: &WarpTheme) -> WarpThemeFill {
 fn render_pane_icon_with_status(
     variant: IconWithStatusVariant,
     theme: &WarpTheme,
+    icon_bg: ThemeFill,
 ) -> Box<dyn Element> {
-    render_icon_with_status(
-        variant,
-        VERTICAL_TABS_ICON_SIZE,
-        0.,
-        theme,
-        theme.background(),
-    )
+    render_icon_with_status(variant, VERTICAL_TABS_ICON_SIZE, 0., theme, icon_bg)
 }
 
 #[derive(Clone, Default)]
@@ -336,6 +350,12 @@ impl PaneRowStackPosition {
     }
 }
 
+/// The pane row's background fill by interaction state. The active/selected row
+/// *inverts* (#warp-32): a colored active tab fills with a strong tint of its own
+/// color — the single vivid block in the panel — while idle/hover colored rows
+/// stay quiet with a faint tint behind their full-strength strip. An uncolored
+/// active tab keeps the neutral `fg_overlay` lift, and uncolored rows are otherwise
+/// unchanged.
 fn pane_row_background(
     pane_color: Option<ThemeFill>,
     is_selected: bool,
@@ -344,23 +364,100 @@ fn pane_row_background(
     is_being_dragged: bool,
     theme: &WarpTheme,
 ) -> Option<ThemeFill> {
-    if let Some(color) = pane_color {
-        let opacity = if is_selected || is_hovered || is_in_multi_selection {
-            TAB_COLOR_HOVER_OPACITY
-        } else {
-            TAB_COLOR_OPACITY
-        };
-        Some(color.with_opacity(opacity))
-    } else if is_selected {
-        Some(internal_colors::fg_overlay_2(theme))
+    if is_selected {
+        match pane_color {
+            // Active colored row: strong fill of its own color (the inversion).
+            Some(color) => Some(color.with_opacity(TAB_COLOR_ACTIVE_OPACITY)),
+            // Active uncolored row: neutral selected lift, as before.
+            None => Some(internal_colors::fg_overlay_2(theme)),
+        }
     } else if is_in_multi_selection && is_hovered {
-        // Hovering a multi-selected row steps one shade darker so the hover
-        // stays visually distinguishable from the in-selection highlight.
         Some(internal_colors::fg_overlay_2(theme))
-    } else if is_in_multi_selection || is_being_dragged || is_hovered {
+    } else if is_in_multi_selection || is_being_dragged {
+        Some(internal_colors::fg_overlay_1(theme))
+    } else if let Some(color) = pane_color {
+        // Idle / hover colored row: a faint tint of its own color (the strip
+        // carries identity, so this is purely gentle presence).
+        Some(color.with_opacity(if is_hovered {
+            TAB_COLOR_TINT_HOVER_OPACITY
+        } else {
+            TAB_COLOR_TINT_OPACITY
+        }))
+    } else if is_hovered {
         Some(internal_colors::fg_overlay_1(theme))
     } else {
         None
+    }
+}
+
+/// The solid background color the row's *content* (text/icons/metadata) sits on,
+/// used to contrast-pick readable foreground colors. Only the active colored row
+/// differs: it fills with a strong tint of its color (#warp-32 inversion), so
+/// content reads against that fill. Every other row — inactive, uncolored, or the
+/// neutral lift — leaves content on the theme background exactly as before. The
+/// content is built once (outside the hover closure), so this is the resting fill.
+fn pane_row_content_bg(
+    pane_color: Option<ThemeFill>,
+    is_selected: bool,
+    theme: &WarpTheme,
+) -> ThemeFill {
+    match pane_color {
+        Some(color) if is_selected => color.with_opacity(TAB_COLOR_ACTIVE_OPACITY),
+        _ => theme.background(),
+    }
+}
+
+/// Luminance below which a fill is treated as "dark/mid" and gets white content.
+/// On a saturated mid-luminance fill (e.g. rose-pine `love`, a red at ~0.25
+/// luminance) the WCAG picker is happy with near-black text — it clears 4.5:1 — but
+/// white reads far better perceptually. White wins below this; genuinely light
+/// fills (foam/gold, ~>0.5) keep dark text. 0.5 is a starting point.
+const ACTIVE_COLORED_WHITE_TEXT_LUMINANCE: f32 = 0.5;
+
+/// Foreground fill for content sitting on the *active colored row's* strong color
+/// fill. The WCAG luminance picker lets near-black pass on saturated mid-luminance
+/// colors even where white reads better, so bias to white on dark/mid fills and
+/// only defer to the normal picker on genuinely light ones. `sub` returns the
+/// dimmer "sub-text" tone (matching the 90%/60% main/sub opacity split the theme
+/// uses elsewhere).
+fn active_colored_content_text(theme: &WarpTheme, fill: ColorU, sub: bool) -> WarpThemeFill {
+    if relative_luminance(fill) < ACTIVE_COLORED_WHITE_TEXT_LUMINANCE {
+        // Dark/mid fill: white, dimmed to the sub-text opacity for the sub tone.
+        let opacity = if sub { 60 } else { 90 };
+        WarpThemeFill::Solid(coloru_with_opacity(ColorU::white(), opacity))
+    } else if sub {
+        theme.sub_text_color(WarpThemeFill::Solid(fill))
+    } else {
+        theme.main_text_color(WarpThemeFill::Solid(fill))
+    }
+}
+
+/// The resolved main and sub text fills for a pane row's content. Only the active
+/// colored row is special-cased (the #warp-32 inversion fills it with its color, so
+/// content reads against that fill and needs the perceptual white bias above);
+/// every other row picks against `theme.background()` exactly as before.
+struct PaneRowTextColors {
+    main: WarpThemeFill,
+    sub: WarpThemeFill,
+}
+
+fn pane_row_text_colors(
+    pane_color: Option<ThemeFill>,
+    is_selected: bool,
+    theme: &WarpTheme,
+) -> PaneRowTextColors {
+    match pane_color {
+        Some(color) if is_selected => {
+            let fill = color.with_opacity(TAB_COLOR_ACTIVE_OPACITY).into_solid();
+            PaneRowTextColors {
+                main: active_colored_content_text(theme, fill, false),
+                sub: active_colored_content_text(theme, fill, true),
+            }
+        }
+        _ => PaneRowTextColors {
+            main: theme.main_text_color(theme.background()),
+            sub: theme.sub_text_color(theme.background()),
+        },
     }
 }
 
@@ -409,6 +506,17 @@ fn render_pane_row_element(
         container_is_hovered,
     } = props;
     let is_selected = is_active_tab && is_focused;
+    // Resting (non-hovered) row background, used to pick a readable pin-icon
+    // color against a colored tab's background. The pin only shows when the row
+    // is not hovered, so the resting background is the right basis.
+    let effective_bg = pane_row_background(
+        pane_color,
+        is_selected,
+        is_in_multi_selection,
+        false,
+        is_being_dragged,
+        theme,
+    );
     let show_pin = FeatureFlag::PinnedTabs.is_enabled() && is_pinned && !container_is_hovered;
     let mut row = Hoverable::new(mouse_state, move |state| {
         // Hovered or selected rows always fully round; otherwise derive the
@@ -433,12 +541,30 @@ fn render_pane_row_element(
             container = container.with_background(background);
         }
 
+        // #warp-32: a colored tab carries its identity in a leading strip, rendered
+        // as a thick leading border so it's clipped to the row's rounding and spans
+        // the full row height for free. On idle rows the strip is the full-strength
+        // color over a faint tint. On the *active* row the whole row is a strong
+        // fill of that color, so the strip flips to the contrasting/light color —
+        // it reads as a divider against the fill instead of vanishing into it.
+        // Uncolored tabs keep their existing 1px selected outline unchanged.
         let pane: Box<dyn Element> = container
-            .with_border(Border::all(1.).with_border_fill(if is_selected {
-                internal_colors::fg_overlay_3(theme).into()
+            .with_border(if let Some(color) = pane_color {
+                let strip_color = if is_selected {
+                    theme
+                        .sub_text_color(color.with_opacity(TAB_COLOR_ACTIVE_OPACITY))
+                        .into_solid()
+                } else {
+                    color.into_solid()
+                };
+                Border::left(TAB_COLOR_STRIP_WIDTH).with_border_fill(strip_color)
             } else {
-                ElementFill::None
-            }))
+                Border::all(1.).with_border_fill(if is_selected {
+                    internal_colors::fg_overlay_3(theme).into()
+                } else {
+                    ElementFill::None
+                })
+            })
             .finish();
 
         // Pin indicator anchored at the visible pane's top-right corner. Pin
@@ -446,7 +572,9 @@ fn render_pane_row_element(
         if show_pin {
             let pin_icon = ConstrainedBox::new(
                 WarpIcon::PinFilledDiagonal
-                    .to_warpui_icon(theme.sub_text_color(theme.background()))
+                    .to_warpui_icon(
+                        theme.sub_text_color(effective_bg.unwrap_or(theme.background())),
+                    )
                     .finish(),
             )
             .with_width(PIN_INDICATOR_ICON_SIZE)
@@ -3129,12 +3257,10 @@ fn resolve_icon_with_status_variant(
     typed: &TypedPane<'_>,
     title: &str,
     appearance: &Appearance,
+    main_text: WarpThemeFill,
+    sub_text: WarpThemeFill,
     app: &AppContext,
 ) -> IconWithStatusVariant {
-    let theme = appearance.theme();
-    let main_text = theme.main_text_color(theme.background());
-    let sub_text = theme.sub_text_color(theme.background());
-
     let drive_color = |object_type: DriveObjectType| -> WarpThemeFill {
         WarpThemeFill::Solid(warp_drive_icon_color(appearance, object_type))
     };
@@ -3233,10 +3359,23 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
     let appearance = Appearance::as_ref(app);
     let theme = appearance.theme();
     let font_family = appearance.ui_font_family();
+    let is_selected = props.is_active_tab && props.is_focused;
+    let row_bg = pane_row_content_bg(props.pane_color, is_selected, theme);
+    let text_colors = pane_row_text_colors(props.pane_color, is_selected, theme);
+    let main_text_color = text_colors.main;
+    let sub_text_color = text_colors.sub;
 
     let icon = render_pane_icon_with_status(
-        resolve_icon_with_status_variant(&props.typed, &props.title, appearance, app),
+        resolve_icon_with_status_variant(
+            &props.typed,
+            &props.title,
+            appearance,
+            text_colors.main,
+            text_colors.sub,
+            app,
+        ),
         theme,
+        row_bg,
     );
 
     // Top-align the icon when there are multiple lines of content so it sits next to
@@ -3270,11 +3409,11 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
                     || {
                         Text::new_inline(props.displayed_title().to_string(), font_family, 12.)
                             .with_clip(ClipConfig::ellipsis())
-                            .with_color(theme.main_text_color(theme.background()).into())
+                            .with_color(main_text_color.into())
                             .finish()
                     },
                     12.,
-                    theme.main_text_color(theme.background()),
+                    main_text_color,
                     ClipConfig::ellipsis(),
                     appearance,
                     app,
@@ -3305,7 +3444,7 @@ fn render_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn Element> {
             content_col.add_child(
                 Text::new_inline(effective_subtitle, font_family, 12.)
                     .with_clip(subtitle_clip)
-                    .with_color(theme.sub_text_color(theme.background()).into())
+                    .with_color(sub_text_color.into())
                     .finish(),
             );
         }
@@ -4115,8 +4254,10 @@ fn render_terminal_row_content(
     app: &AppContext,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
-    let main_text_color = theme.main_text_color(theme.background());
-    let sub_text_color = theme.sub_text_color(theme.background());
+    let is_selected = props.is_active_tab && props.is_focused;
+    let text_colors = pane_row_text_colors(props.pane_color, is_selected, theme);
+    let main_text_color = text_colors.main;
+    let sub_text_color = text_colors.sub;
     let primary_info = *TabSettings::as_ref(app).vertical_tabs_primary_info.value();
 
     let title_text = terminal_view.terminal_title_from_shell();
@@ -4243,6 +4384,7 @@ fn render_terminal_row_content(
             metadata_left,
             chip_entrypoint_for_granularity(props.display_granularity),
             &props.badge_mouse_states,
+            sub_text_color,
             appearance,
             app,
         ))
@@ -4432,14 +4574,25 @@ fn render_summary_tab_item(
 
     let appearance = Appearance::as_ref(app);
     let theme = appearance.theme();
-    let main_text_color = theme.main_text_color(theme.background());
-    let sub_text_color = theme.sub_text_color(theme.background());
+    let is_selected = props.is_active_tab && props.is_focused;
+    let row_bg = pane_row_content_bg(props.pane_color, is_selected, theme);
+    let text_colors = pane_row_text_colors(props.pane_color, is_selected, theme);
+    let main_text_color = text_colors.main;
+    let sub_text_color = text_colors.sub;
     let icon = summary_pane_kind_icons
         .map(|icons| render_summary_pane_kind_icons(icons, VERTICAL_TABS_ICON_SIZE, appearance))
         .unwrap_or_else(|| {
             render_pane_icon_with_status(
-                resolve_icon_with_status_variant(&props.typed, &props.title, appearance, app),
+                resolve_icon_with_status_variant(
+                    &props.typed,
+                    &props.title,
+                    appearance,
+                    text_colors.main,
+                    text_colors.sub,
+                    app,
+                ),
                 theme,
+                row_bg,
             )
         });
 
@@ -4586,6 +4739,7 @@ fn render_summary_tab_item(
                 branch_entry,
                 pr_badge_mouse_states.get(idx).cloned(),
                 pr_chip_entrypoint,
+                sub_text_color,
                 appearance,
             ))
             .with_margin_top(REGION_GAP)
@@ -4902,10 +5056,9 @@ fn render_summary_branch_line(
     entry: &VerticalTabsSummaryBranchEntry,
     pr_badge_mouse_state: Option<MouseStateHandle>,
     pr_chip_entrypoint: VerticalTabsChipEntrypoint,
+    sub_text_color: WarpThemeFill,
     appearance: &Appearance,
 ) -> Box<dyn Element> {
-    let theme = appearance.theme();
-    let sub_text_color = theme.sub_text_color(theme.background());
     let mut row = Flex::row()
         .with_main_axis_size(MainAxisSize::Max)
         .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
@@ -5058,12 +5211,10 @@ fn render_terminal_metadata_line(
     left_content: MetadataLeftContent,
     row_entrypoint: VerticalTabsChipEntrypoint,
     badge_mouse_states: &PaneRowBadgeMouseStates,
+    sub_text_color: WarpThemeFill,
     appearance: &Appearance,
     app: &AppContext,
 ) -> Box<dyn Element> {
-    let theme = appearance.theme();
-    let sub_text_color = theme.sub_text_color(theme.background());
-
     let mut meta = Flex::row()
         .with_main_axis_size(MainAxisSize::Max)
         .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
@@ -5240,9 +5391,9 @@ fn render_passive_terminal_pull_request_badge(
 fn render_compact_non_terminal_title(
     title: &str,
     typed: &TypedPane<'_>,
+    main_text_color: WarpThemeFill,
     appearance: &Appearance,
 ) -> Box<dyn Element> {
-    let theme = appearance.theme();
     let clip_config = if matches!(typed, TypedPane::Code(_)) {
         ClipConfig::start()
     } else {
@@ -5250,7 +5401,7 @@ fn render_compact_non_terminal_title(
     };
     Text::new_inline(title.to_string(), appearance.ui_font_family(), 12.)
         .with_clip(clip_config)
-        .with_color(theme.main_text_color(theme.background()).into())
+        .with_color(main_text_color.into())
         .finish()
 }
 
@@ -5296,8 +5447,9 @@ fn render_badge_container(content: Box<dyn Element>, background: ThemeFill) -> B
 
 fn render_pull_request_badge_content(label: &str, appearance: &Appearance) -> Box<dyn Element> {
     let theme = appearance.theme();
-    let main_text_color = theme.main_text_color(theme.background());
-    let sub_text_color = theme.sub_text_color(theme.background());
+    let badge_bg = theme.background();
+    let main_text_color = theme.main_text_color(badge_bg);
+    let sub_text_color = theme.sub_text_color(badge_bg);
     Flex::row()
         .with_cross_axis_alignment(CrossAxisAlignment::Center)
         .with_spacing(4.)
@@ -6940,14 +7092,25 @@ fn render_compact_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn El
     let effective_subtitle = props.subtitle.clone();
     let appearance = Appearance::as_ref(app);
     let theme = appearance.theme();
-    let main_text_color = theme.main_text_color(theme.background());
-    let sub_text_color = theme.sub_text_color(theme.background());
+    let is_selected = props.is_active_tab && props.is_focused;
+    let row_bg = pane_row_content_bg(props.pane_color, is_selected, theme);
+    let text_colors = pane_row_text_colors(props.pane_color, is_selected, theme);
+    let main_text_color = text_colors.main;
+    let sub_text_color = text_colors.sub;
     let font_family = appearance.ui_font_family();
     let has_indicator = props.typed.badge(app).is_some() || has_unread_activity(&props.typed, app);
 
     let icon = render_pane_icon_with_status(
-        resolve_icon_with_status_variant(&props.typed, &props.title, appearance, app),
+        resolve_icon_with_status_variant(
+            &props.typed,
+            &props.title,
+            appearance,
+            text_colors.main,
+            text_colors.sub,
+            app,
+        ),
         theme,
+        row_bg,
     );
 
     let primary_info = *TabSettings::as_ref(app).vertical_tabs_primary_info.value();
@@ -7057,6 +7220,7 @@ fn render_compact_pane_row(props: PaneProps<'_>, app: &AppContext) -> Box<dyn El
                     render_compact_non_terminal_title(
                         props.displayed_title(),
                         &props.typed,
+                        main_text_color,
                         appearance,
                     )
                 },
