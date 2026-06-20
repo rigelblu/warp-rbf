@@ -18,6 +18,12 @@ This is my ~~fork~~ flavour of [Warp](https://github.com/warpdotdev/Warp), simil
 **Data-access grants**
 — WarpOOSS self-signs with a stable identity, so a macOS data-access grant survives rebuilds instead of re-prompting 7–20× every launch.
 
+**Data-access grants**
+— WarpOOSS self-signs with a stable identity, so a macOS data-access grant survives rebuilds instead of re-prompting 7–20× every launch.
+
+**Enable vertical tabs and groups**
+— tab groups (macOS), the vertical tab layout, and directory-colored tabs.
+
 ## 🟠⋯ Settings, Themes, And Data
 Copy your regular warp configs
 ```
