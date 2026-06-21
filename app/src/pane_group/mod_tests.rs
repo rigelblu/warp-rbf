@@ -2130,6 +2130,33 @@ fn test_add_pane_aborts_cleanly_when_pre_attach_returns_false() {
 }
 
 #[test]
+fn test_snapshot_keeps_collapsed_panes_in_layout() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let pane_group = mock_pane_group(&mut app, Default::default());
+
+        pane_group.update(&mut app, |panes, ctx| {
+            let first_terminal_id = get_newly_created_pane_id(panes, &[]);
+            panes.add_terminal_pane(Direction::Right, None, ctx);
+            let second_terminal_id = get_newly_created_pane_id(panes, &[first_terminal_id]);
+
+            assert!(panes.panes.collapse_pane(second_terminal_id));
+            assert_eq!(panes.visible_pane_ids(), vec![first_terminal_id]);
+
+            let PaneNodeSnapshot::Branch(snapshot) = panes.snapshot(ctx) else {
+                panic!("split layout should snapshot as a branch");
+            };
+
+            assert_eq!(
+                snapshot.children.len(),
+                2,
+                "collapsed panes must remain in app-state snapshots so restart does not lose the pane/session"
+            );
+        });
+    });
+}
+
+#[test]
 fn test_focus_notebook() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
