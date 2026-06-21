@@ -15,7 +15,8 @@ This is my ~~fork~~ flavour of [Warp](https://github.com/warpdotdev/Warp), simil
 > It's not vibe coded, but I also haven't looked at any code (my software development, architecture, Rust skills aren't there yet). I pay very close attention to the other parts though, the "why" and the "what". Claude/Codex generated and reviewed all the code through my extensive skill system, based on everything I've learned and how I think from the last 15 years working on products. I rebuilt it from my product ship plan and feature design briefs to create a clean commit history and make it easier to consume if others are curious. Manually verified every feature myself too.
 
 # 🔵⋯ Features
-<TODO>
+**Data-access grants**
+— WarpOOSS self-signs with a stable identity, so a macOS data-access grant survives rebuilds instead of re-prompting 7–20× every launch.
 
 ## 🟠⋯ Settings, Themes, And Data
 Copy your regular warp configs
