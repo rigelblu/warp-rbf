@@ -105,6 +105,7 @@ DEBUG=false
 ARTIFACT="app"
 CODESIGN=true
 SELFSIGN=false
+EXPLICIT_NOSIGN=false
 OPEN_AFTER_BUNDLE=false
 READ_PASSWORDS_FROM_ENV=false
 
@@ -134,6 +135,7 @@ while (( "$#" )); do
       echo "Skipping code signing."
       CODESIGN=false
       SELFSIGN=false
+      EXPLICIT_NOSIGN=true
       shift
       ;;
     # Sign with a local Apple Development cert instead of the official Warp cert.
@@ -242,6 +244,11 @@ while (( "$#" )); do
 done
 # set positional arguments in their proper place
 eval set -- "$PARAMS"
+
+if [[ $EXPLICIT_NOSIGN = true ]]; then
+  CODESIGN=false
+  SELFSIGN=false
+fi
 
 # Infer a cargo profile from the bundle configuration.
 if [[ $DEBUG = true ]]; then
@@ -644,6 +651,23 @@ if [[ $READ_PASSWORDS_FROM_ENV != true ]]; then
   CODESIGN=false
 fi
 
+# OSS local builds can't reach the company Developer ID cert, so without this they fall
+# back to the linker's ad-hoc signature. macOS keys TCC grants (Full Disk Access, "access
+# data from other apps") to the signing identity, and an ad-hoc signature is identified by
+# the binary's CDHash — which changes on every rebuild, so every grant is forgotten and the
+# permission prompts re-fire from scratch each build. Default the OSS channel to self-signing
+# with the local Apple Development cert (a stable identity), so a grant given once persists
+# across rebuilds. `--nosign` still wins; `--selfsign`/company codesigning are already handled.
+if [[ $RELEASE_CHANNEL = "oss" && $EXPLICIT_NOSIGN != true && $CODESIGN != true && $SELFSIGN != true ]]; then
+  echo "OSS channel: defaulting to self-signing with the local Apple Development cert (stable TCC grants)."
+  SELFSIGN=true
+fi
+
+SELFSIGN_ENTITLEMENTS="script/SelfSign-Entitlements.plist"
+if [[ $DEBUG = true || $RELEASE_CHANNEL = "local" || $RELEASE_CHANNEL = "dev" ]]; then
+  SELFSIGN_ENTITLEMENTS="script/Debug-Entitlements.plist"
+fi
+
 if [[ $CODESIGN = true ]]; then
   # TODO - does this need to change per user?  Seems like it's tied to the WARP_NOTARIZATION_PASSWORD password.
   APPLE_TEAM_ID="2BBY89MBSN"
@@ -686,7 +710,8 @@ fi
 ##############################
 
 if [[ $SELFSIGN = true ]]; then
-  SIGNING_CERT="$(security find-identity -p codesigning -v | grep "Apple Development" | awk '{print $2}' | head -1)"
+  echo "Using self-signing entitlements from $SELFSIGN_ENTITLEMENTS."
+  SIGNING_CERT="$(security find-identity -p codesigning -v | awk '/Apple Development/ { print $2; exit }')"
   if [[ -z "$SIGNING_CERT" ]]; then
     echo "No Apple Development cert found, falling back to ad-hoc signing."
     SIGNING_CERT="-"
@@ -695,10 +720,10 @@ if [[ $SELFSIGN = true ]]; then
   fi
   if [[ "$ARTIFACT" == app ]]; then
     echo "Self-signing $BUNDLE_DIR/$WARP_APP_NAME.app with ${SIGNING_CERT}..."
-    codesign --force --deep --options runtime --sign "$SIGNING_CERT" "$BUNDLE_DIR/$WARP_APP_NAME.app" --entitlements script/Debug-Entitlements.plist
+    codesign --force --deep --options runtime --sign "$SIGNING_CERT" "$BUNDLE_DIR/$WARP_APP_NAME.app" --entitlements "$SELFSIGN_ENTITLEMENTS"
   elif [[ "$ARTIFACT" == cli || "$ARTIFACT" == warpctrl ]]; then
     echo "Self-signing $OUT_DIR/$WARP_BIN with ${SIGNING_CERT}..."
-    codesign --force --options runtime --sign "$SIGNING_CERT" "$OUT_DIR/$WARP_BIN" --entitlements script/Debug-Entitlements.plist
+    codesign --force --options runtime --sign "$SIGNING_CERT" "$OUT_DIR/$WARP_BIN" --entitlements "$SELFSIGN_ENTITLEMENTS"
   fi
 elif [[ $CODESIGN = true ]]; then
   if [[ "$ARTIFACT" == app ]]; then
