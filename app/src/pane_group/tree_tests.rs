@@ -33,6 +33,137 @@ fn test_split_pane_layout() {
     assert_eq!(root_pane.pane_ids(), vec![panes[2], panes[0], panes[1]]);
 }
 
+// ---- #warp-03: collapse a pane to an edge rail (tree primitive) ----
+
+#[test]
+fn test_collapse_pane_parks_in_tree_but_hides_from_navigation() {
+    // A | B side by side. Collapsing B keeps it in the tree (pane_ids) — its
+    // rail still occupies the slot — but removes it from navigation
+    // (visible_pane_ids). This is the deliberate render-vs-navigation divergence.
+    let panes = [PaneId::dummy_pane_id(), PaneId::dummy_pane_id()];
+    let mut tree = PaneData::new(panes[0]);
+    tree.split(panes[0], panes[1], Direction::Right);
+
+    assert!(tree.collapse_pane(panes[1]));
+    assert!(tree.pane_ids().contains(&panes[1]), "still in the tree");
+    assert!(
+        !tree.visible_pane_ids().contains(&panes[1]),
+        "excluded from navigation"
+    );
+    assert_eq!(tree.collapsed_pane_ids(), vec![panes[1]]);
+}
+
+#[test]
+fn test_collapsed_pane_is_hidden_for_navigation_but_not_snapshot_omitted() {
+    let panes = [PaneId::dummy_pane_id(), PaneId::dummy_pane_id()];
+    let mut tree = PaneData::new(panes[0]);
+    tree.split(panes[0], panes[1], Direction::Right);
+
+    assert!(tree.collapse_pane(panes[1]));
+    assert!(tree.is_pane_hidden(&panes[1]));
+    assert!(!tree.is_hidden_closed_pane(&panes[1]));
+    assert!(!tree.should_omit_pane_from_snapshot(&panes[1]));
+
+    tree.hide_closed_pane(panes[0]);
+    assert!(tree.is_hidden_closed_pane(&panes[0]));
+    assert!(tree.should_omit_pane_from_snapshot(&panes[0]));
+}
+
+#[test]
+fn test_restore_collapsed_pane_returns_it_to_its_original_position() {
+    let panes = [PaneId::dummy_pane_id(), PaneId::dummy_pane_id()];
+    let mut tree = PaneData::new(panes[0]);
+    tree.split(panes[0], panes[1], Direction::Right);
+
+    tree.collapse_pane(panes[1]);
+    assert!(tree.restore_collapsed_pane(panes[1]));
+    assert!(tree.visible_pane_ids().contains(&panes[1]));
+    assert_eq!(
+        tree.pane_ids(),
+        vec![panes[0], panes[1]],
+        "restored to original position"
+    );
+    assert!(tree.collapsed_pane_ids().is_empty());
+}
+
+#[test]
+fn test_pane_group_by_direction_returns_whole_bordering_subtree() {
+    // Column-first 2x2: H[ V[A,B], V[C,D] ] — A,B = left column; C,D = right.
+    let [a, b, c, d] = [
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+    ];
+    let mut tree = PaneData::new(a);
+    tree.split(a, c, Direction::Right); // A | C
+    tree.split(a, b, Direction::Down); // V[A,B] | C
+    tree.split(c, d, Direction::Down); // V[A,B] | V[C,D]
+    assert_eq!(tree.pane_ids(), vec![a, b, c, d]);
+
+    // Right crosses the column boundary → the WHOLE right column rails as one.
+    assert_eq!(
+        tree.pane_group_by_direction(a, Direction::Right),
+        vec![c, d]
+    );
+    // Down stays inside the left column → just B (the 2x2 scoping).
+    assert_eq!(tree.pane_group_by_direction(a, Direction::Down), vec![b]);
+    // Edges → empty (no-op).
+    assert!(tree.pane_group_by_direction(a, Direction::Left).is_empty());
+    assert!(tree.pane_group_by_direction(a, Direction::Up).is_empty());
+    // From the right column, Left rails the whole left column as one group.
+    assert_eq!(tree.pane_group_by_direction(c, Direction::Left), vec![a, b]);
+}
+
+#[test]
+fn test_collapsing_the_last_visible_pane_is_a_noop() {
+    // A tab must always keep at least one visible pane.
+    let panes = [PaneId::dummy_pane_id(), PaneId::dummy_pane_id()];
+    let mut tree = PaneData::new(panes[0]);
+    tree.split(panes[0], panes[1], Direction::Right);
+
+    assert!(tree.collapse_pane(panes[0]));
+    // Only panes[1] is visible now; collapsing it must be refused.
+    assert!(!tree.collapse_pane(panes[1]));
+    assert!(tree.visible_pane_ids().contains(&panes[1]));
+}
+
+#[test]
+fn test_double_collapse_and_restore_non_collapsed_are_noops() {
+    let panes = [
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+    ];
+    let mut tree = PaneData::new(panes[0]);
+    tree.split(panes[0], panes[1], Direction::Right);
+    tree.split(panes[1], panes[2], Direction::Right);
+
+    assert!(tree.collapse_pane(panes[1]));
+    // Collapsing an already-collapsed pane is a no-op.
+    assert!(!tree.collapse_pane(panes[1]));
+    assert_eq!(tree.collapsed_pane_ids(), vec![panes[1]]);
+    // Restoring a pane that isn't collapsed is a no-op.
+    assert!(!tree.restore_collapsed_pane(panes[0]));
+}
+
+#[test]
+fn test_collapsed_pane_ids_preserve_collapse_order() {
+    let panes = [
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+    ];
+    let mut tree = PaneData::new(panes[0]);
+    tree.split(panes[0], panes[1], Direction::Right);
+    tree.split(panes[1], panes[2], Direction::Right);
+
+    assert!(tree.collapse_pane(panes[2]));
+    assert!(tree.collapse_pane(panes[0]));
+    // Collapse order (2 then 0), independent of left-to-right tree order.
+    assert_eq!(tree.collapsed_pane_ids(), vec![panes[2], panes[0]]);
+}
+
 #[test]
 fn test_left_pane_split() {
     let panes = [
@@ -689,6 +820,95 @@ fn test_reset_pane_sizes_only_resets_containing_branch() {
             .collect::<Vec<_>>(),
         vec![DEFAULT_FLEX_VALUE, DEFAULT_FLEX_VALUE]
     );
+}
+
+// ---- #warp-03: resize across a collapsed rail (skip rails, keep them fixed) ----
+
+#[test]
+fn test_resize_skips_collapsed_middle_rail_to_the_real_panes() {
+    // A | B | C in one horizontal branch. Collapse the MIDDLE pane B: its rail
+    // isn't resizable and carries no divider, so A's divider must resize the
+    // real panes that flank the rail — A and C — not no-op against the 20px
+    // rail. (Tom's repro: 3 panes, collapse the middle.)
+    let panes = [
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+    ];
+    let mut tree = PaneData::new(panes[0]);
+    tree.split(panes[0], panes[1], Direction::Right);
+    tree.split(panes[1], panes[2], Direction::Right);
+    assert!(tree.collapse_pane(panes[1]));
+
+    let hidden = tree.hidden_panes.clone();
+    let root = tree.root.as_branch().expect("root is a branch");
+
+    // The next real pane after A (idx 0) skips the rail at idx 1.
+    assert_eq!(root.next_resizable_index(0, &hidden), Some(2));
+    // A's divider now resizes A <-> C across the rail.
+    assert_eq!(root.resize_pair_across_rails(0, &hidden), Some((0, 2)));
+}
+
+#[test]
+fn test_keyboard_resize_divider_skips_rail_from_either_side() {
+    // Same A | B(collapsed) | C. The focused pane resizes against its nearest
+    // real neighbor whichever side it's on.
+    let panes = [
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+    ];
+    let mut tree = PaneData::new(panes[0]);
+    tree.split(panes[0], panes[1], Direction::Right);
+    tree.split(panes[1], panes[2], Direction::Right);
+    assert!(tree.collapse_pane(panes[1]));
+
+    let hidden = tree.hidden_panes.clone();
+    let root = tree.root.as_branch().expect("root is a branch");
+
+    // Focused A (idx 0): a real pane (C) follows across the rail, so A uses its
+    // own trailing divider (idx 0), which resolves to A <-> C.
+    assert_eq!(root.keyboard_resize_divider_idx(0, &hidden), Some(0));
+    // Focused C (idx 2, the last node): nothing real follows, so fall back to
+    // the nearest real pane before it (A, idx 0) — the pair is still A <-> C.
+    assert_eq!(root.keyboard_resize_divider_idx(2, &hidden), Some(0));
+}
+
+#[test]
+fn test_resize_pair_is_plain_adjacent_without_collapse() {
+    // No collapse: behaviour is unchanged — each divider resizes its adjacent
+    // pair. Guards against the rail-skipping logic altering the normal case.
+    let panes = [
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+    ];
+    let mut tree = PaneData::new(panes[0]);
+    tree.split(panes[0], panes[1], Direction::Right);
+    tree.split(panes[1], panes[2], Direction::Right);
+
+    let hidden = tree.hidden_panes.clone();
+    let root = tree.root.as_branch().expect("root is a branch");
+
+    assert_eq!(root.next_resizable_index(0, &hidden), Some(1));
+    assert_eq!(root.resize_pair_across_rails(0, &hidden), Some((0, 1)));
+    assert_eq!(root.resize_pair_across_rails(1, &hidden), Some((1, 2)));
+}
+
+#[test]
+fn test_no_resize_target_past_a_trailing_rail() {
+    // A | B with B collapsed: A fills and nothing real follows, so there is no
+    // pair to resize — the divider is suppressed rather than fighting the rail.
+    let panes = [PaneId::dummy_pane_id(), PaneId::dummy_pane_id()];
+    let mut tree = PaneData::new(panes[0]);
+    tree.split(panes[0], panes[1], Direction::Right);
+    assert!(tree.collapse_pane(panes[1]));
+
+    let hidden = tree.hidden_panes.clone();
+    let root = tree.root.as_branch().expect("root is a branch");
+
+    assert_eq!(root.next_resizable_index(0, &hidden), None);
+    assert_eq!(root.resize_pair_across_rails(0, &hidden), None);
 }
 
 #[test]

@@ -311,6 +311,9 @@ pub enum PaneGroupAction {
     NavigateUp,
     NavigateDown,
     ToggleMaximizePane,
+    CollapsePane(Direction),
+    RestoreCollapsedGroup(Vec<PaneId>),
+    ExpandPaneToEdge,
     HandleFocusChange,
     FocusTerminalView(EntityId),
 }
@@ -413,6 +416,63 @@ pub fn init(app: &mut AppContext) {
             id!("PaneGroup") & !id!("PaneGroup_PaneMaximized") & !id!("PaneGroup_PaneDragging"),
         )
         .with_key_binding("cmdorctrl-alt-down"),
+    ]);
+
+    // #warp-03 — collapse a pane to a thin edge rail (meta-shift-<hjkl>, vim
+    // directional: h=left / j=down / k=up / l=right; the key points at the pane
+    // that rails) and expand the focused pane to the edge (meta-shift-E). Distinct
+    // from the cmd-ctrl-<arrow> divider resize below — verified collision-free.
+    // The opposite key restores (retract-wins), so no separate restore binding is
+    // registered. NOTE: shift+letter must be UPPERCASE in the string or keymap.rs
+    // panics at load (keymap.rs:951). And Warp maps left-option to META, so these
+    // use `meta`, not `alt` — a `shift-alt-<letter>` string never matches a
+    // left-option press (it falls through and types the option char, e.g. Ô).
+    app.register_editable_bindings([
+        EditableBinding::new(
+            "pane_group:collapse_left",
+            "Collapse pane to a rail > Rail the pane to the left",
+            PaneGroupAction::CollapsePane(Direction::Left),
+        )
+        .with_context_predicate(
+            id!("PaneGroup") & !id!("PaneGroup_PaneMaximized") & !id!("PaneGroup_PaneDragging"),
+        )
+        .with_mac_key_binding("meta-shift-H"),
+        EditableBinding::new(
+            "pane_group:collapse_right",
+            "Collapse pane to a rail > Rail the pane to the right",
+            PaneGroupAction::CollapsePane(Direction::Right),
+        )
+        .with_context_predicate(
+            id!("PaneGroup") & !id!("PaneGroup_PaneMaximized") & !id!("PaneGroup_PaneDragging"),
+        )
+        .with_mac_key_binding("meta-shift-L"),
+        EditableBinding::new(
+            "pane_group:collapse_up",
+            "Collapse pane to a rail > Rail the pane above",
+            PaneGroupAction::CollapsePane(Direction::Up),
+        )
+        .with_context_predicate(
+            id!("PaneGroup") & !id!("PaneGroup_PaneMaximized") & !id!("PaneGroup_PaneDragging"),
+        )
+        .with_mac_key_binding("meta-shift-K"),
+        EditableBinding::new(
+            "pane_group:collapse_down",
+            "Collapse pane to a rail > Rail the pane below",
+            PaneGroupAction::CollapsePane(Direction::Down),
+        )
+        .with_context_predicate(
+            id!("PaneGroup") & !id!("PaneGroup_PaneMaximized") & !id!("PaneGroup_PaneDragging"),
+        )
+        .with_mac_key_binding("meta-shift-J"),
+        EditableBinding::new(
+            "pane_group:expand_to_edge",
+            "Collapse pane to a rail > Expand the focused pane to the edge (rail the rest)",
+            PaneGroupAction::ExpandPaneToEdge,
+        )
+        .with_context_predicate(
+            id!("PaneGroup") & !id!("PaneGroup_PaneMaximized") & !id!("PaneGroup_PaneDragging"),
+        )
+        .with_mac_key_binding("meta-shift-E"),
     ]);
 
     // Register bindings to resize a pane. We only set bindings on Mac because there isn't an
@@ -2081,11 +2141,12 @@ impl PaneGroup {
                     .iter()
                     .filter_map(|(flex, node)| {
                         if let PaneNode::Leaf(pane_id) = node {
-                            if self.panes.is_hidden_closed_pane(pane_id) {
-                                // Don't snapshot hidden panes (undo, move, job,
-                                // child agent, etc.). Child agent panes are
-                                // restored lazily once their parent agent view
-                                // is re-entered.
+                            if self.panes.should_omit_pane_from_snapshot(pane_id) {
+                                // Don't snapshot hidden panes that are truly
+                                // absent from the saved layout (undo, move,
+                                // job, child agent, etc.). Collapsed panes are
+                                // still live layout content and must survive
+                                // restart, even if they restore expanded.
                                 return None;
                             }
                         }
@@ -5655,6 +5716,115 @@ impl PaneGroup {
         }
     }
 
+    /// #warp-03 — directional collapse-to-rail with retract-wins restore.
+    /// `meta-shift-<hjkl>` rails the nearest expanded *bordering group* in
+    /// `direction` (a whole adjacent column/row, or a single pane in a flat
+    /// split — see `pane_group_by_direction`); but first, if that group on the
+    /// side our edge would retreat toward (the opposite direction) is railed, we
+    /// restore it instead — so a repeat press reverses your last collapse before
+    /// it collapses the other way. Otherwise it is progressive: it hops past
+    /// groups already railed to rail the next expanded one. Focus stays on the
+    /// active pane (you are undoing your own expansion, not navigating in).
+    fn collapse_pane_in_direction(&mut self, direction: Direction, ctx: &mut ViewContext<Self>) {
+        let focused = self.focused_pane_id(ctx);
+
+        // Retract-wins: restore the nearest railed group on the side our edge
+        // would retreat toward (the opposite direction), hopping past expanded
+        // groups — so repeated presses progressively undo a progressive collapse
+        // (`↑↑` mirrors `↓↓`).
+        let mut cursor = focused;
+        loop {
+            let opposite = self
+                .panes
+                .pane_group_by_direction(cursor, direction.opposite());
+            let Some(first) = opposite.first().copied() else {
+                break; // edge — no railed group to retract toward
+            };
+            if opposite.iter().any(|id| self.panes.is_pane_collapsed(id)) {
+                let mut restored = false;
+                for id in &opposite {
+                    if self.panes.is_pane_collapsed(id) {
+                        restored |= self.panes.restore_collapsed_pane(*id);
+                    }
+                }
+                if restored {
+                    ctx.notify();
+                    ctx.emit(Event::AppStateChanged);
+                    return;
+                }
+            }
+            cursor = first; // this group is expanded — look past it for a railed one
+        }
+
+        // Otherwise rail the nearest expanded *bordering group* in the pressed
+        // direction — a whole adjacent column/row (a structural sibling subtree)
+        // rails as one. Progressive (#warp-03): hop past groups already railed so
+        // a repeat press sweeps to the next expanded slot (e.g. in a 3-stack from
+        // the top, a second `meta-shift-J` rails the bottom pane).
+        let mut cursor = focused;
+        loop {
+            let group = self.panes.pane_group_by_direction(cursor, direction);
+            let Some(first) = group.first().copied() else {
+                break; // edge — nothing more in this direction
+            };
+            if group.iter().all(|id| self.panes.is_pane_collapsed(id)) {
+                cursor = first; // group already railed — look past it
+                continue;
+            }
+            let mut collapsed = false;
+            for id in &group {
+                if !self.panes.is_pane_collapsed(id) {
+                    collapsed |= self.panes.collapse_pane(*id);
+                }
+            }
+            if collapsed {
+                ctx.notify();
+                ctx.emit(Event::AppStateChanged);
+            }
+            break;
+        }
+    }
+
+    /// #warp-03 — expand the focused pane to the edge: rail every other visible
+    /// pane (each bordering subtree coalescing to one edge rail) so the focused
+    /// pane reclaims almost the whole tab. Restore via the opposite arrows (now
+    /// progressive) or by clicking the rails.
+    fn expand_pane_to_edge(&mut self, ctx: &mut ViewContext<Self>) {
+        let focused = self.focused_pane_id(ctx);
+        let others: Vec<PaneId> = self
+            .panes
+            .visible_pane_ids()
+            .into_iter()
+            .filter(|id| *id != focused)
+            .collect();
+        let mut collapsed = false;
+        for id in others {
+            collapsed |= self.panes.collapse_pane(id);
+        }
+        if collapsed {
+            ctx.notify();
+            ctx.emit(Event::AppStateChanged);
+        }
+    }
+
+    /// #warp-03 — restore a railed group by clicking its rail (a single pane, or
+    /// a whole coalesced column/row). Unlike the opposite-arrow restore (which
+    /// keeps focus on the active pane), clicking a rail focuses the restored
+    /// group's first pane — direct manipulation, you touched it.
+    fn restore_collapsed_group_and_focus(&mut self, ids: &[PaneId], ctx: &mut ViewContext<Self>) {
+        let mut restored = false;
+        for id in ids {
+            restored |= self.panes.restore_collapsed_pane(*id);
+        }
+        if restored {
+            if let Some(first) = ids.first() {
+                self.focus_pane_and_record_in_history(*first, ctx);
+            }
+            ctx.notify();
+            ctx.emit(Event::AppStateChanged);
+        }
+    }
+
     fn focus_pane_on_mouse_event(
         &mut self,
         id: PaneId,
@@ -7874,6 +8044,9 @@ impl TypedActionView for PaneGroup {
             NavigateUp => self.navigate_pane_by_direction(Direction::Up, ctx),
             NavigateDown => self.navigate_pane_by_direction(Direction::Down, ctx),
             ToggleMaximizePane => self.toggle_maximize_pane(ctx),
+            CollapsePane(direction) => self.collapse_pane_in_direction(*direction, ctx),
+            RestoreCollapsedGroup(ids) => self.restore_collapsed_group_and_focus(ids, ctx),
+            ExpandPaneToEdge => self.expand_pane_to_edge(ctx),
             Move {
                 id,
                 target_pane_id,

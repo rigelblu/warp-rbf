@@ -27,6 +27,10 @@ This is my ~~fork~~ flavour of [Warp](https://github.com/warpdotdev/Warp), simil
 **Speak Selection reads the selection** (macOS)
 — Option+Esc on selected terminal text reads what you selected, not from the top of the pane.
 
+**Collapse a pane to a rail**
+— tuck a pane you're not using to a thin edge rail to reclaim its space without closing it.
+- `meta-shift-hjkl` rails the bordering pane · `meta-shift-E` expands the focused pane · click the rail or the opposite key restores
+
 ## 🟠⋯ Settings, Themes, And Data
 Copy your regular warp configs
 ```

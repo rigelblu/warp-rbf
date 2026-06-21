@@ -5,10 +5,10 @@ use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::Vector2F;
 use warp_core::features::FeatureFlag;
 use warpui::elements::{
-    ChildAnchor, ConstrainedBox, Container, DispatchEventResult, Element, Empty, EventHandler,
-    Flex, Hoverable, MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement,
-    ParentOffsetBounds, PositionedElementAnchor, PositionedElementOffsetBounds, Rect, SavePosition,
-    Shrinkable, Stack,
+    ChildAnchor, ConstrainedBox, Container, CrossAxisAlignment, DispatchEventResult, Element,
+    Empty, EventHandler, Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle,
+    OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, PositionedElementAnchor,
+    PositionedElementOffsetBounds, Rect, SavePosition, Shrinkable, Stack,
 };
 use warpui::platform::Cursor;
 use warpui::{AppContext, EntityId, ViewContext};
@@ -17,6 +17,7 @@ use super::{ActivationReason, PaneGroup, PaneId};
 use crate::app_state;
 use crate::pane_group::{get_minimum_pane_size, DraggedBorder, PaneGroupAction};
 use crate::themes::theme::WarpTheme;
+use crate::ui_components::icons::Icon;
 
 #[cfg(test)]
 #[path = "tree_tests.rs"]
@@ -37,6 +38,11 @@ pub fn get_divider_thickness() -> f32 {
 // This is added around each side of the divider. Only used
 // when minimalist UI is enabled.
 const DIVIDER_RESIZE_PADDING: f32 = 4.0;
+
+// #warp-03 — a collapsed pane renders as a thin rail of this thickness (px),
+// with an expand chevron of this size centered in it.
+const RAIL_THICKNESS: f32 = 20.0;
+const RAIL_CHEVRON_SIZE: f32 = 14.0;
 
 /// Tree for all of the split panes
 ///
@@ -70,6 +76,12 @@ pub enum HiddenPaneReason {
     // Pane is a child agent spawned by an orchestrator. It stays hidden
     // until the user explicitly reveals it from the status card.
     ChildAgent,
+
+    // Pane is collapsed to a thin edge rail (#warp-03). Unlike the other
+    // reasons, a collapsed pane is still rendered — as a rail in its slot —
+    // but it is excluded from navigation (visible_pane_ids). The render loop
+    // (Branch::render) special-cases it; see pane_collapsed.
+    Collapsed,
 }
 
 impl HiddenPane {
@@ -101,6 +113,13 @@ impl HiddenPane {
         Self {
             pane_id,
             reason: HiddenPaneReason::ChildAgent,
+        }
+    }
+
+    pub fn from_collapse(pane_id: PaneId) -> Self {
+        Self {
+            pane_id,
+            reason: HiddenPaneReason::Collapsed,
         }
     }
 }
@@ -177,6 +196,18 @@ impl Direction {
         match self {
             Direction::Left | Direction::Right => SplitDirection::Horizontal,
             Direction::Up | Direction::Down => SplitDirection::Vertical,
+        }
+    }
+
+    /// The reverse direction. Used by collapse-to-rail's "retract-wins"
+    /// restore: pressing the opposite arrow restores the pane your edge
+    /// would retreat toward (#warp-03).
+    pub(crate) fn opposite(&self) -> Direction {
+        match self {
+            Direction::Left => Direction::Right,
+            Direction::Right => Direction::Left,
+            Direction::Up => Direction::Down,
+            Direction::Down => Direction::Up,
         }
     }
 }
@@ -324,6 +355,48 @@ impl PaneData {
         pane_hidden_for_child_agent(&self.hidden_panes, &id)
     }
 
+    /// Collapse a pane to a thin edge rail (#warp-03): it stays in the tree
+    /// (still in `pane_ids`) but is excluded from `visible_pane_ids` and is
+    /// rendered as a rail in its slot. No-op (returns false) if the pane is
+    /// already hidden, or if it is the last visible pane — a tab must always
+    /// keep at least one visible pane.
+    pub fn collapse_pane(&mut self, id: PaneId) -> bool {
+        if self.is_pane_hidden(&id) || self.visible_pane_ids().len() <= 1 {
+            return false;
+        }
+        self.hidden_panes.push(HiddenPane::from_collapse(id));
+        true
+    }
+
+    /// Restore a collapsed pane to its original position and size. The pane
+    /// never left the tree, so this just drops the collapse marker. Returns
+    /// false if the pane was not collapsed.
+    pub fn restore_collapsed_pane(&mut self, id: PaneId) -> bool {
+        if let Some(pos) = self
+            .hidden_panes
+            .iter()
+            .position(|pane| pane.pane_id == id && pane.reason == HiddenPaneReason::Collapsed)
+        {
+            self.hidden_panes.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// The currently-collapsed (railed) panes, in collapse order.
+    pub fn collapsed_pane_ids(&self) -> Vec<PaneId> {
+        self.hidden_panes
+            .iter()
+            .filter(|hidden| hidden.reason == HiddenPaneReason::Collapsed)
+            .map(|hidden| hidden.pane_id)
+            .collect()
+    }
+
+    pub fn is_pane_collapsed(&self, id: &PaneId) -> bool {
+        pane_collapsed(&self.hidden_panes, id)
+    }
+
     pub fn toggle_pane_visibility_for_job(&mut self, id: PaneId) -> bool {
         if pane_hidden_for_job(&self.hidden_panes, &id) {
             self.show_pane_for_job(id);
@@ -339,7 +412,11 @@ impl PaneData {
     }
 
     pub fn unhide_closed_pane(&mut self, id: PaneId) -> bool {
-        if let Some(pos) = self.hidden_panes.iter().position(|pane| pane.pane_id == id) {
+        if let Some(pos) = self
+            .hidden_panes
+            .iter()
+            .position(|pane| pane.pane_id == id && pane.reason == HiddenPaneReason::Closed)
+        {
             self.hidden_panes.remove(pos);
             true
         } else {
@@ -391,9 +468,20 @@ impl PaneData {
     }
 
     pub fn is_hidden_closed_pane(&self, pane_id: &PaneId) -> bool {
-        self.hidden_panes
-            .iter()
-            .any(|hidden_pane| hidden_pane.pane_id == *pane_id)
+        self.hidden_panes.iter().any(|hidden_pane| {
+            hidden_pane.pane_id == *pane_id && hidden_pane.reason == HiddenPaneReason::Closed
+        })
+    }
+
+    /// Returns true when a hidden pane should be omitted from app-state snapshots.
+    ///
+    /// Collapsed panes are intentionally excluded from navigation but still
+    /// represent live layout content, so they must snapshot like ordinary panes
+    /// unless/until collapse state gets its own persisted representation.
+    pub fn should_omit_pane_from_snapshot(&self, pane_id: &PaneId) -> bool {
+        self.hidden_panes.iter().any(|hidden_pane| {
+            hidden_pane.pane_id == *pane_id && hidden_pane.reason != HiddenPaneReason::Collapsed
+        })
     }
 
     pub fn replace_pane(
@@ -525,7 +613,9 @@ impl PaneData {
         delta: f32,
         ctx: &mut ViewContext<PaneGroup>,
     ) {
-        self.root.adjust_pane_size(border_id, delta, ctx);
+        let hidden_panes = self.hidden_panes.clone();
+        self.root
+            .adjust_pane_size(border_id, delta, &hidden_panes, ctx);
     }
 
     pub fn reset_pane_sizes(&mut self, border_id: EntityId) -> bool {
@@ -539,8 +629,9 @@ impl PaneData {
         delta: f32,
         ctx: &mut ViewContext<PaneGroup>,
     ) {
+        let hidden_panes = self.hidden_panes.clone();
         self.root
-            .adjust_pane_size_by_id(pane_id, direction, delta, ctx);
+            .adjust_pane_size_by_id(pane_id, direction, delta, &hidden_panes, ctx);
     }
 
     pub fn panes_by_direction(
@@ -575,6 +666,22 @@ impl PaneData {
         } else {
             // We didn't find any panes in that direction, return an empty list
             Vec::new()
+        }
+    }
+
+    /// #warp-03 — the structural sibling subtree bordering `pane_id` in
+    /// `direction`: walk to the ancestor branch whose split runs along the
+    /// direction and return that adjacent slot's pane ids — a single pane in a
+    /// flat split, a whole bordering column/row when the slot is itself a
+    /// branch. Unlike `panes_by_direction` (geometry-filtered, for focus-nav),
+    /// this is purely structural; it's what "rail the whole bordering group"
+    /// routes through. Empty when `pane_id` is at the tree's edge in `direction`.
+    pub fn pane_group_by_direction(&self, pane_id: PaneId, direction: Direction) -> Vec<PaneId> {
+        match &self.root {
+            PaneNode::Branch(branch) => branch
+                .pane_group_by_direction(pane_id, direction)
+                .unwrap_or_default(),
+            PaneNode::Leaf(_) => Vec::new(),
         }
     }
 
@@ -752,11 +859,14 @@ impl PaneNode {
         &mut self,
         border_id: EntityId,
         delta: f32,
+        hidden_panes: &[HiddenPane],
         ctx: &mut ViewContext<PaneGroup>,
     ) -> bool {
         match self {
             PaneNode::Leaf(_) => false,
-            PaneNode::Branch(branch) => branch.adjust_pane_size(border_id, delta, ctx),
+            PaneNode::Branch(branch) => {
+                branch.adjust_pane_size(border_id, delta, hidden_panes, ctx)
+            }
         }
     }
 
@@ -779,12 +889,13 @@ impl PaneNode {
         pane_id: PaneId,
         direction: SplitDirection,
         delta: f32,
+        hidden_panes: &[HiddenPane],
         ctx: &mut ViewContext<PaneGroup>,
     ) -> bool {
         match self {
             PaneNode::Leaf(id) => *id == pane_id,
             PaneNode::Branch(branch) => {
-                branch.adjust_pane_size_by_id(pane_id, direction, delta, ctx)
+                branch.adjust_pane_size_by_id(pane_id, direction, delta, hidden_panes, ctx)
             }
         }
     }
@@ -1070,12 +1181,24 @@ impl PaneBranch {
         // Collect divider positions to render them as positioned elements later.
         let mut divider_positions = Vec::new();
 
-        for (flex, node) in self.nodes.iter() {
+        for (idx, (flex, node)) in self.nodes.iter().enumerate() {
             // Skip nodes that have no visible children, but preserve nodes with children
             // hidden for move operations as they serve as drop targets
             if !node.has_visible_children(hidden_panes)
                 && !node.has_children_hidden_for_move(hidden_panes)
             {
+                continue;
+            }
+            // #warp-03: a collapsed leaf — or a fully-collapsed subtree — renders
+            // as ONE thin in-place rail (a non-flexible child, so siblings keep
+            // their flex and reflow into the freed space). A fully-railed bordering
+            // column/row coalesces to a single strip; clicking it restores the
+            // whole group. The rail carries no divider; consume this slot's divider
+            // so the divider/pane alignment still holds.
+            let railed_group = railed_pane_ids(node, hidden_panes);
+            if let Some(group) = railed_group {
+                parent.add_child(create_rail(self.axis, idx == 0, group, theme));
+                dividers.next();
                 continue;
             }
             let mut flex_value = flex.0;
@@ -1092,6 +1215,16 @@ impl PaneBranch {
             );
             if let Some(divider) = dividers.next() {
                 if matches!(node, PaneNode::Leaf(id) if pane_hidden_for_move(hidden_panes, id)) {
+                    continue;
+                }
+                // #warp-03: a rail has no divider of its own, but the real panes
+                // that flank it stay resizable across it — so render this pane's
+                // divider whenever a real (non-railed) pane follows, even past
+                // one or more rails. Suppress only when nothing real follows (a
+                // rail run to the branch's trailing edge): there's nothing to
+                // resize against. `adjust_pane_size` resolves the divider to the
+                // real pair, skipping the rail(s).
+                if self.next_resizable_index(idx, hidden_panes).is_none() {
                     continue;
                 }
                 // Store a position index to render the actual divider at after we've rendered all pane content.
@@ -1134,22 +1267,86 @@ impl PaneBranch {
         stack.finish()
     }
 
+    /// #warp-03: the index of the next node after `after` that renders as a
+    /// real, resizable pane — skipping rails (collapsed leaves / fully-collapsed
+    /// subtrees, which render at a fixed size). `None` when only rails or the
+    /// branch's trailing edge follow.
+    fn next_resizable_index(&self, after: usize, hidden_panes: &[HiddenPane]) -> Option<usize> {
+        (after + 1..self.nodes.len()).find(|&j| !is_railed(&self.nodes[j].1, hidden_panes))
+    }
+
+    /// #warp-03: the nearest real, resizable pane before `before`, skipping rails.
+    fn prev_resizable_index(&self, before: usize, hidden_panes: &[HiddenPane]) -> Option<usize> {
+        (0..before)
+            .rev()
+            .find(|&j| !is_railed(&self.nodes[j].1, hidden_panes))
+    }
+
+    /// #warp-03: the two real panes a divider drag resizes. A rail isn't
+    /// resizable and carries no divider, so the divider at `divider_idx` resizes
+    /// the real pane that owns it against the nearest real pane beyond it,
+    /// leaving any rail(s) in between at their fixed size. With no rail this is
+    /// just the adjacent pair `(divider_idx, divider_idx + 1)`. `None` when no
+    /// real pane follows.
+    fn resize_pair_across_rails(
+        &self,
+        divider_idx: usize,
+        hidden_panes: &[HiddenPane],
+    ) -> Option<(usize, usize)> {
+        if is_railed(&self.nodes[divider_idx].1, hidden_panes) {
+            return None;
+        }
+        let right = self.next_resizable_index(divider_idx, hidden_panes)?;
+        Some((divider_idx, right))
+    }
+
+    /// #warp-03: which divider a keyboard resize of the focused pane at
+    /// `focused_idx` acts on — its own trailing divider when a real pane follows
+    /// (skipping rails), otherwise the nearest real pane's divider on the leading
+    /// side (the focused pane is the last real one). `None` when it is the only
+    /// real pane in the branch. The returned index is always a valid divider.
+    fn keyboard_resize_divider_idx(
+        &self,
+        focused_idx: usize,
+        hidden_panes: &[HiddenPane],
+    ) -> Option<usize> {
+        if self
+            .next_resizable_index(focused_idx, hidden_panes)
+            .is_some()
+        {
+            // A real pane follows, so `focused_idx` is not the last node and its
+            // trailing divider exists; `adjust_pane_size` resolves it across rails.
+            Some(focused_idx)
+        } else {
+            self.prev_resizable_index(focused_idx, hidden_panes)
+        }
+    }
+
     pub fn adjust_pane_size(
         &mut self,
         border_id: EntityId,
         delta: f32,
+        hidden_panes: &[HiddenPane],
         ctx: &mut ViewContext<PaneGroup>,
     ) -> bool {
-        if let Some(idx) = self
+        if let Some(divider_idx) = self
             .dividers
             .iter()
             .position(|divider| divider.id == border_id)
         {
-            let pane_size_1 = self.nodes[idx].1.pane_size(ctx);
-            let pane_size_2 = self.nodes[idx + 1].1.pane_size(ctx);
+            // #warp-03: resize the two real panes that flank this divider,
+            // skipping any collapsed rail between them (the rail keeps its fixed
+            // size). Without a rail this is just the adjacent pair.
+            let Some((left, right)) = self.resize_pair_across_rails(divider_idx, hidden_panes)
+            else {
+                return true;
+            };
 
-            let flex_1 = self.nodes[idx].0 .0;
-            let flex_2 = self.nodes[idx + 1].0 .0;
+            let pane_size_1 = self.nodes[left].1.pane_size(ctx);
+            let pane_size_2 = self.nodes[right].1.pane_size(ctx);
+
+            let flex_1 = self.nodes[left].0 .0;
+            let flex_2 = self.nodes[right].0 .0;
 
             let total_flex = flex_1 + flex_2;
 
@@ -1172,14 +1369,14 @@ impl PaneBranch {
                 .max(0.)
                 .min(total_flex);
 
-            self.nodes[idx].0 = PaneFlex(new_flex);
-            self.nodes[idx + 1].0 = PaneFlex(total_flex - new_flex);
+            self.nodes[left].0 = PaneFlex(new_flex);
+            self.nodes[right].0 = PaneFlex(total_flex - new_flex);
 
             return true;
         }
 
         for (_, node) in &mut self.nodes {
-            if node.adjust_pane_size(border_id, delta, ctx) {
+            if node.adjust_pane_size(border_id, delta, hidden_panes, ctx) {
                 return true;
             }
         }
@@ -1227,19 +1424,32 @@ impl PaneBranch {
         pane_id: PaneId,
         direction: SplitDirection,
         delta: f32,
+        hidden_panes: &[HiddenPane],
         ctx: &mut ViewContext<PaneGroup>,
     ) -> bool {
-        for (idx, (_, node)) in self.nodes.iter_mut().enumerate() {
-            if node.adjust_pane_size_by_id(pane_id, direction, delta, ctx) {
+        for idx in 0..self.nodes.len() {
+            if self.nodes[idx].1.adjust_pane_size_by_id(
+                pane_id,
+                direction,
+                delta,
+                hidden_panes,
+                ctx,
+            ) {
                 // If the resizing direction is different from the splitting direction
                 // of the branch, we return for the parents to handle.
                 if direction != self.axis {
                     return true;
                 }
 
-                let divider_id = self.dividers[idx.min(self.dividers.len() - 1)].id;
-                self.adjust_pane_size(divider_id, delta, ctx);
-                break;
+                // #warp-03: resize the focused pane against its nearest *real*
+                // neighbor, skipping any collapsed rail. The rail previously
+                // swallowed the resize at the min-size guard (a 20px rail is
+                // always below the minimum pane size).
+                if let Some(divider_idx) = self.keyboard_resize_divider_idx(idx, hidden_panes) {
+                    let divider_id = self.dividers[divider_idx].id;
+                    self.adjust_pane_size(divider_id, delta, hidden_panes, ctx);
+                }
+                return false;
             }
         }
         false
@@ -1287,6 +1497,43 @@ impl PaneBranch {
                 }
             }
         }
+        None
+    }
+
+    /// See `PaneData::pane_group_by_direction`. Recursive: the innermost branch
+    /// whose axis matches `direction` and where `pane_id`'s subtree has an
+    /// adjacent sibling in that direction wins, returning that sibling subtree's
+    /// pane ids.
+    fn pane_group_by_direction(
+        &self,
+        pane_id: PaneId,
+        direction: Direction,
+    ) -> Option<Vec<PaneId>> {
+        let idx = self
+            .nodes
+            .iter()
+            .position(|(_, node)| node.contains_pane(pane_id))?;
+
+        // Innermost matching branch wins: try the containing child first.
+        if let PaneNode::Branch(child) = &self.nodes[idx].1 {
+            if let Some(group) = child.pane_group_by_direction(pane_id, direction) {
+                return Some(group);
+            }
+        }
+
+        // Otherwise, if this branch splits along the press direction, the
+        // adjacent slot in that direction is the bordering group.
+        if direction.axis() == self.axis {
+            let adjacent = match direction {
+                Direction::Left | Direction::Up => idx.checked_sub(1)?,
+                Direction::Right | Direction::Down => {
+                    let next = idx + 1;
+                    (next < self.nodes.len()).then_some(next)?
+                }
+            };
+            return Some(self.nodes[adjacent].1.pane_ids());
+        }
+
         None
     }
 
@@ -1342,6 +1589,34 @@ fn pane_hidden_for_child_agent(hidden_panes: &[HiddenPane], id: &PaneId) -> bool
         .any(|pane| pane.reason == HiddenPaneReason::ChildAgent && pane.pane_id == *id)
 }
 
+fn pane_collapsed(hidden_panes: &[HiddenPane], id: &PaneId) -> bool {
+    hidden_panes
+        .iter()
+        .any(|pane| pane.reason == HiddenPaneReason::Collapsed && pane.pane_id == *id)
+}
+
+/// #warp-03: the pane ids a node renders as a single rail when it is fully
+/// collapsed — a collapsed leaf, or a branch whose every pane is collapsed.
+/// `None` when the node has at least one visible (non-railed) pane. Shared by
+/// the render loop and the resize path so "what is a rail" has one definition.
+fn railed_pane_ids(node: &PaneNode, hidden_panes: &[HiddenPane]) -> Option<Vec<PaneId>> {
+    match node {
+        PaneNode::Leaf(id) if pane_collapsed(hidden_panes, id) => Some(vec![*id]),
+        PaneNode::Branch(_) => {
+            let ids = node.pane_ids();
+            (!ids.is_empty() && ids.iter().all(|id| pane_collapsed(hidden_panes, id)))
+                .then_some(ids)
+        }
+        _ => None,
+    }
+}
+
+/// #warp-03: whether a node renders as a rail (a fixed-size, non-resizable
+/// strip) rather than a real pane. Resize skips these.
+fn is_railed(node: &PaneNode, hidden_panes: &[HiddenPane]) -> bool {
+    railed_pane_ids(node, hidden_panes).is_some()
+}
+
 impl FindPaneByDirection for PaneBranch {
     fn panes_by_direction(
         &self,
@@ -1381,6 +1656,91 @@ impl FindPaneByDirection for PaneBranch {
         }
         FindPaneByDirectionResult::NotFound
     }
+}
+
+/// #warp-03 — render a collapsed pane as a thin in-place rail: a non-flexible
+/// band with a single expand chevron, clickable to restore the pane. The
+/// chevron points the way the pane will grow back, derived from the rail's edge
+/// (its position in the parent branch) so it is correct on every side.
+fn create_rail(
+    axis: SplitDirection,
+    is_leading_edge: bool,
+    pane_ids: Vec<PaneId>,
+    theme: &WarpTheme,
+) -> Box<dyn Element> {
+    let chevron_icon = match (axis, is_leading_edge) {
+        // Vertical branch → row rail: leading (top) expands down, trailing (bottom) expands up.
+        (SplitDirection::Vertical, true) => Icon::ChevronDown,
+        (SplitDirection::Vertical, false) => Icon::ChevronUp,
+        // Horizontal branch → column rail: leading (left) expands right, trailing (right) expands left.
+        (SplitDirection::Horizontal, true) => Icon::ChevronRight,
+        (SplitDirection::Horizontal, false) => Icon::ChevronLeft,
+    };
+
+    let chevron = ConstrainedBox::new(
+        chevron_icon
+            .to_warpui_icon(theme.active_ui_text_color())
+            .finish(),
+    )
+    .with_width(RAIL_CHEVRON_SIZE)
+    .with_height(RAIL_CHEVRON_SIZE)
+    .finish();
+
+    // Center the chevron in a band that fills the cross axis and is thin along
+    // the rail's edge: a row rail (vertical branch) is full-width / thin-height;
+    // a column rail (horizontal branch) is thin-width / full-height.
+    // A railed pane reads as a distinct, clickable strip: a background band
+    // (so it stands out from the active pane) with the chevron centered on top.
+    // Stack[ filled bg, centered chevron ] — same bg+overlay pattern as the
+    // color dot; the bg fills the band via the divider's Rect+background pattern.
+    let rail_background = theme.split_pane_border_color();
+    let band = match axis {
+        SplitDirection::Vertical => Stack::new()
+            .with_child(
+                ConstrainedBox::new(Rect::new().with_background(rail_background).finish())
+                    .with_height(RAIL_THICKNESS)
+                    .finish(),
+            )
+            .with_child(
+                ConstrainedBox::new(
+                    Flex::row()
+                        .with_main_axis_size(MainAxisSize::Max)
+                        .with_main_axis_alignment(MainAxisAlignment::Center)
+                        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                        .with_child(chevron)
+                        .finish(),
+                )
+                .with_height(RAIL_THICKNESS)
+                .finish(),
+            )
+            .finish(),
+        SplitDirection::Horizontal => Stack::new()
+            .with_child(
+                ConstrainedBox::new(Rect::new().with_background(rail_background).finish())
+                    .with_width(RAIL_THICKNESS)
+                    .finish(),
+            )
+            .with_child(
+                ConstrainedBox::new(
+                    Flex::column()
+                        .with_main_axis_size(MainAxisSize::Max)
+                        .with_main_axis_alignment(MainAxisAlignment::Center)
+                        .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                        .with_child(chevron)
+                        .finish(),
+                )
+                .with_width(RAIL_THICKNESS)
+                .finish(),
+            )
+            .finish(),
+    };
+
+    EventHandler::new(band)
+        .on_left_mouse_down(move |ctx, _, _| {
+            ctx.dispatch_typed_action(PaneGroupAction::RestoreCollapsedGroup(pane_ids.clone()));
+            DispatchEventResult::StopPropagation
+        })
+        .finish()
 }
 
 /// Create an invisible placeholder element that occupies the same space as the divider
