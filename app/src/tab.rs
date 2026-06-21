@@ -8,8 +8,10 @@ use serde::{Deserialize, Serialize};
 use settings::Setting as _;
 use warp_core::context_flag::ContextFlag;
 use warp_core::ui::builder::UiBuilder;
+use warp_core::ui::color::contrast::relative_luminance;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::AnsiColors;
+use warp_core::ui::theme::WarpTheme;
 use warpui::elements::{
     Align, Border, ChildAnchor, Clipped, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, DragAxis, Draggable, DraggableState, DropTarget, Element, Empty, Fill,
@@ -43,7 +45,6 @@ use crate::ui_components::color_dot::{render_color_dot, TAB_COLOR_OPTIONS};
 use crate::ui_components::icons::{Icon, ICON_DIMENSIONS};
 use crate::util::color::{coloru_with_opacity, Opacity};
 use crate::util::truncation::truncate_from_end;
-use crate::window_settings::WindowSettings;
 use crate::workspace::sync_inputs::SyncedInputState;
 use crate::workspace::tab_group::{TabGroup, TabGroupId};
 use crate::workspace::tab_settings::{
@@ -67,9 +68,29 @@ pub fn uses_vertical_tabs(ctx: &AppContext) -> bool {
     FeatureFlag::VerticalTabs.is_enabled() && *TabSettings::as_ref(ctx).use_vertical_tabs
 }
 
-const WARP_2_TAB_COLOR_OPACITY: Opacity = 25;
-const WARP_2_HOVERED_TAB_COLOR_OPACITY: Opacity = 50;
+const WARP_2_TAB_COLOR_OPACITY: Opacity = 50;
+const WARP_2_HOVERED_TAB_COLOR_OPACITY: Opacity = 100;
 const TAB_CLOSE_BUTTON_OPACITY: Opacity = 60;
+
+// Colored-tab appearance in the horizontal tab bar (#warp-32), mirroring the
+// vertical panel's inversion: an *idle/hover* tab carries only a faint same-color
+// tint behind a full-strength bottom accent bar (the accent carries identity); the
+// *active* tab inverts — it fills with a strong tint of its own color instead, see
+// TAB_COLOR_ACTIVE_OPACITY below.
+const TAB_BOTTOM_ACCENT_TINT_OPACITY: Opacity = 14; // idle colored tab
+const TAB_BOTTOM_ACCENT_TINT_HOVER_OPACITY: Opacity = 24; // hover
+const TAB_BOTTOM_ACCENT_HEIGHT: f32 = 3.0; // bottom accent bar thickness (px)
+
+// The *active* colored tab inverts (#warp-32), matching the vertical panel
+// (`vertical_tabs.rs` is the canonical recipe): instead of the neutral selected
+// fill it fills with a strong tint of its own color — the one vivid block in the
+// bar — kept just under fully opaque so it still composites slightly over a tab
+// background image rather than reading as a flat paint chip.
+const TAB_COLOR_ACTIVE_OPACITY: Opacity = 90;
+// Luminance below which the active colored fill is treated as "dark/mid" and gets
+// white title text; genuinely light fills (foam/gold, ~>0.5) keep WCAG-picked dark
+// text. Mirrors `vertical_tabs.rs::ACTIVE_COLORED_WHITE_TEXT_LUMINANCE`.
+const ACTIVE_COLORED_WHITE_TEXT_LUMINANCE: f32 = 0.5;
 const TAB_CLOSE_BUTTON_WIDTH: f32 = 20.0;
 const MAX_TOOLTIP_LENGTH: usize = 80;
 pub(crate) const TAB_PIN_INDICATOR_ICON_SIZE: f32 = 16.0;
@@ -80,6 +101,32 @@ const TAB_INDICATOR_SYNCED_COLOR: u32 = 0x4A93FFFF;
 const COMPACT_TAB_WIDTH_THRESHOLD: f32 = 42.0;
 // Horizontal inset for the tab close button
 const TAB_CLOSE_BUTTON_HORIZONTAL_INSET: f32 = 2.0;
+
+/// The pure tab color carried by a colored tab's background fill — the most-opaque
+/// stop of the theme-background-to-color gradient stored in `TabStyles::background`.
+fn tab_color_solid(fill: ThemeFill) -> ColorU {
+    match fill {
+        ThemeFill::Solid(color) => color,
+        ThemeFill::VerticalGradient(gradient) => gradient.get_most_opaque(),
+        ThemeFill::HorizontalGradient(gradient) => gradient.get_most_opaque(),
+    }
+}
+
+/// Title-text color for a tab sitting on the *active colored* fill (#warp-32
+/// inversion). Mirrors `vertical_tabs.rs::active_colored_content_text`: the WCAG
+/// picker lets near-black pass on saturated mid-luminance colors where white reads
+/// better, so bias white on dark/mid fills and defer to the normal picker only on
+/// genuinely light ones.
+fn active_colored_tab_text(theme: &WarpTheme, tab_color: ColorU) -> ColorU {
+    let fill = ThemeFill::Solid(tab_color)
+        .with_opacity(TAB_COLOR_ACTIVE_OPACITY)
+        .into_solid();
+    if relative_luminance(fill) < ACTIVE_COLORED_WHITE_TEXT_LUMINANCE {
+        coloru_with_opacity(ColorU::white(), 90)
+    } else {
+        theme.main_text_color(ThemeFill::Solid(fill)).into()
+    }
+}
 
 /// Represents the user's manual tab-color selection state.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -792,7 +839,6 @@ pub struct TabComponent<'a> {
     tooltip_directory: Option<String>,
     tooltip_git_branch: Option<String>,
     is_drag_target: bool,
-    background_opacity: u8,
     /// Set to `true` when this `TabComponent` is being rendered inside the
     /// floating chip overlay used during a cross-window tab drag. In that
     /// mode `build()` skips the outer `SavePosition`, `Draggable`, and
@@ -950,11 +996,6 @@ impl<'a> TabComponent<'a> {
         let tooltip_message = Self::get_tooltip_message(&indicator, tab, ctx);
         let tooltip_directory = Self::get_tooltip_directory(&indicator, tab, ctx);
         let tooltip_git_branch = Self::get_tooltip_git_branch(&indicator, tab, ctx);
-        let window_id = tab.pane_group.window_id(ctx);
-        let background_opacity = WindowSettings::as_ref(ctx)
-            .background_opacity
-            .effective_opacity(window_id, ctx)
-            .clamp(20, 100);
         let pane_group_id = tab.pane_group.id();
         let pane_id = tab.pane_group.as_ref(ctx).focused_pane_id(ctx);
         let locator = PaneViewLocator {
@@ -977,7 +1018,6 @@ impl<'a> TabComponent<'a> {
             tooltip_directory,
             tooltip_git_branch,
             is_drag_target,
-            background_opacity,
             for_drag_ghost: false,
             grouped_member: false,
             sole_grouped_member: false,
@@ -1182,7 +1222,15 @@ impl<'a> TabComponent<'a> {
             self.styles.default
         };
         let font_style = styles.font_properties();
-        let font_color = styles.font_color.expect("Font color is set");
+        // The active colored tab fills with a strong tint of its color (#warp-32
+        // inversion), so its title text biases white to stay legible on saturated
+        // mid-luminance fills; every other tab keeps its themed font color.
+        let font_color = match (self.is_active_tab(), self.styles.background) {
+            (true, Some(background)) => {
+                active_colored_tab_text(self.appearance.theme(), tab_color_solid(background))
+            }
+            _ => styles.font_color.expect("Font color is set"),
+        };
 
         if self.is_tab_being_renamed() {
             Align::new(
@@ -1480,27 +1528,51 @@ impl<'a> TabComponent<'a> {
         let is_active = self.is_active_tab();
         let is_in_multi_tab_selection = self.is_in_multi_tab_selection;
 
-        let (background_color, border_fill) = if FeatureFlag::NewTabStyling.is_enabled() {
-            // If there is a custom tab background, we overlay it with varying opacities.
-            let bg = if let Some(custom_background) = self.styles.background {
-                let base_opacity = if is_active || is_in_multi_tab_selection {
-                    60
-                } else if is_hovered {
-                    40
+        // Colored tab (#warp-32), mirroring the vertical panel's inversion: idle/
+        // hover tabs keep a faint color tint behind a full-strength bottom accent
+        // (identity); the active tab inverts — it fills with a strong tint of its
+        // own color (the one vivid block), its bottom accent flips to a light/
+        // contrasting edge, and its title text biases white (in `render_tab_content`).
+        let bottom_accent = self.styles.background.map(|fill| {
+            let tab_color = tab_color_solid(fill);
+            if is_active {
+                // Active: the whole tab is the color fill, so a same-color accent
+                // would vanish — flip it to a light/contrasting edge that still
+                // reads as a divider against the fill.
+                let strip = theme
+                    .sub_text_color(
+                        ThemeFill::Solid(tab_color).with_opacity(TAB_COLOR_ACTIVE_OPACITY),
+                    )
+                    .into_solid();
+                ThemeFill::Solid(strip)
+            } else {
+                // Idle/hover: full-strength color carries identity.
+                ThemeFill::Solid(tab_color)
+            }
+        });
+
+        let background_color = if let Some(custom_background) = self.styles.background {
+            let tab_color = tab_color_solid(custom_background);
+            if is_active {
+                // Active colored tab inverts: a strong fill of its own color — the
+                // one vivid block in the bar (#warp-32), matching the vertical panel.
+                ThemeFill::Solid(tab_color)
+                    .with_opacity(TAB_COLOR_ACTIVE_OPACITY)
+                    .into()
+            } else if is_in_multi_tab_selection {
+                internal_colors::fg_overlay_2(theme).into()
+            } else {
+                // Idle/hover colored tab: a faint tint behind the full-strength
+                // bottom accent, which carries identity.
+                let tint = if is_hovered {
+                    TAB_BOTTOM_ACCENT_TINT_HOVER_OPACITY
                 } else {
-                    20
+                    TAB_BOTTOM_ACCENT_TINT_OPACITY
                 };
-                let opacity = (base_opacity as f32 * self.background_opacity as f32 / 100.) as u8;
-                match custom_background {
-                    ThemeFill::Solid(color) => coloru_with_opacity(color, opacity).into(),
-                    ThemeFill::VerticalGradient(gradient) => {
-                        coloru_with_opacity(gradient.get_most_opaque(), opacity).into()
-                    }
-                    ThemeFill::HorizontalGradient(gradient) => {
-                        coloru_with_opacity(gradient.get_most_opaque(), opacity).into()
-                    }
-                }
-            } else if is_active {
+                coloru_with_opacity(tab_color, tint).into()
+            }
+        } else if FeatureFlag::NewTabStyling.is_enabled() {
+            if is_active {
                 internal_colors::fg_overlay_2(theme).into()
             } else if is_in_multi_tab_selection && is_hovered {
                 // Hovering a multi-selected tab steps one shade darker so the
@@ -1510,43 +1582,26 @@ impl<'a> TabComponent<'a> {
                 internal_colors::fg_overlay_1(theme).into()
             } else {
                 Fill::None
-            };
-
-            let border = if is_active {
-                internal_colors::fg_overlay_2(theme)
-            } else {
-                internal_colors::fg_overlay_1(theme)
-            };
-
-            (bg, border)
+            }
         } else {
             let tab_opacity = if is_active || is_hovered {
                 WARP_2_HOVERED_TAB_COLOR_OPACITY
             } else {
                 WARP_2_TAB_COLOR_OPACITY
             };
+            coloru_with_opacity(theme.surface_3().into(), tab_opacity).into()
+        };
 
-            let bg = if let Some(custom_background) = self.styles.background {
-                match custom_background {
-                    ThemeFill::Solid(color) => coloru_with_opacity(color, tab_opacity).into(),
-                    ThemeFill::VerticalGradient(gradient) => {
-                        coloru_with_opacity(gradient.get_most_opaque(), tab_opacity).into()
-                    }
-                    ThemeFill::HorizontalGradient(gradient) => {
-                        coloru_with_opacity(gradient.get_most_opaque(), tab_opacity).into()
-                    }
-                }
-            } else {
-                coloru_with_opacity(theme.surface_3().into(), tab_opacity).into()
-            };
-
-            let border = if is_active || is_hovered {
+        let border_fill = if FeatureFlag::NewTabStyling.is_enabled() {
+            if is_active {
                 internal_colors::fg_overlay_2(theme)
             } else {
                 internal_colors::fg_overlay_1(theme)
-            };
-
-            (bg, border)
+            }
+        } else if is_active || is_hovered {
+            internal_colors::fg_overlay_2(theme)
+        } else {
+            internal_colors::fg_overlay_1(theme)
         };
 
         let full_tab_content = {
@@ -1711,11 +1766,17 @@ impl<'a> TabComponent<'a> {
         // Grouped member: inset rounded highlight, no side dividers, no
         // drop target (members can't be dragged currently).
         if self.grouped_member {
-            let highlight = Container::new(stack)
+            let mut highlight = Container::new(stack)
                 .with_background(background_color)
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.0)))
-                .finish();
-            return Container::new(highlight)
+                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(8.0)));
+            if let Some(accent) = bottom_accent {
+                highlight = highlight.with_border(
+                    Border::all(TAB_BOTTOM_ACCENT_HEIGHT)
+                        .with_sides(false, false, true, false)
+                        .with_border_fill(accent),
+                );
+            }
+            return Container::new(highlight.finish())
                 .with_vertical_padding(3.)
                 .with_horizontal_padding(3.)
                 .finish();
@@ -1726,16 +1787,27 @@ impl<'a> TabComponent<'a> {
             .with_background(background_color);
         if FeatureFlag::NewTabStyling.is_enabled() {
             let is_first_tab = self.tab_index == 0;
-            tab = tab.with_border(
+            tab = tab.with_border(if let Some(accent) = bottom_accent {
+                // Colored tab: full-strength bottom accent carries identity, in
+                // place of the neutral inter-tab separators.
+                Border::all(TAB_BOTTOM_ACCENT_HEIGHT)
+                    .with_sides(false, false, true, false)
+                    .with_border_fill(accent)
+            } else {
                 Border::all(1.)
                     // We only include a left border on the very first tab to avoid double borders.
                     .with_sides(false, is_first_tab, false, true)
-                    .with_border_fill(border_fill),
-            );
+                    .with_border_fill(border_fill)
+            });
         } else {
-            tab = tab
-                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.0)))
-                .with_border(Border::all(1.).with_border_fill(border_fill));
+            tab = tab.with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.0)));
+            tab = tab.with_border(if let Some(accent) = bottom_accent {
+                Border::all(TAB_BOTTOM_ACCENT_HEIGHT)
+                    .with_sides(false, false, true, false)
+                    .with_border_fill(accent)
+            } else {
+                Border::all(1.).with_border_fill(border_fill)
+            });
         }
 
         // If the tab is being dragged, add an opaque background behind it
