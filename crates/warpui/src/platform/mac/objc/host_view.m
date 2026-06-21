@@ -14,6 +14,7 @@ void warp_handle_file_drag(WarpHostView *, NSPoint);
 void warp_handle_file_drag_exit(WarpHostView *);
 NSRect warp_ime_position(WarpHostView *, NSRect *);
 id warp_get_accessibility_contents(WarpHostView *);
+id warp_get_accessibility_selected_text(WarpHostView *);
 void warp_marked_text_updated(WarpHostView *, NSString *, NSRange);
 void warp_marked_text_cleared(WarpHostView *);
 
@@ -388,6 +389,20 @@ void warp_marked_text_cleared(WarpHostView *);
 
 - (id)accessibilityValue {
     return warp_get_accessibility_contents(self);
+}
+
+// macOS Speak Selection asks for the selected text; expose the active terminal
+// selection so it speaks the selection instead of `accessibilityValue` from the
+// top. Queried live from Rust (no caching) so it reflects the current selection.
+// Returns nil when there is no active selection, so macOS falls back to default
+// behavior rather than speaking a stale/empty selection.
+// NOTE (warp-02 spike): only `accessibilitySelectedText` is implemented for now.
+// Add `accessibilitySelectedTextRange` / `accessibilityNumberOfCharacters` /
+// `accessibilityStringForRange:` only if macOS validation shows Speak Selection
+// needs them (see brief Known unknowns — minimum NSAccessibility attribute set).
+- (NSString *)accessibilitySelectedText {
+    NSString *selected = warp_get_accessibility_selected_text(self);
+    return selected.length > 0 ? selected : nil;
 }
 
 - (NSInteger)accessibilityNumberOfCharacters {

@@ -161,6 +161,11 @@ pub trait View: Entity {
 pub struct AccessibilityData {
     /// The contents of the view.
     pub content: String,
+    /// The active selected text, when the view has a non-empty text selection.
+    /// Platform accessibility (e.g. macOS Speak Selection) reads this instead of
+    /// starting from the top of `content`. `None` when there is no active text
+    /// selection, so non-participating views and empty selections are unchanged.
+    pub selected_text: Option<String>,
 }
 
 /// An interface for a structure (typically a [`View`]) that handle actions

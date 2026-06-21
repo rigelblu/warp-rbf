@@ -1321,6 +1321,25 @@ pub extern "C-unwind" fn warp_get_accessibility_contents(object: &mut Object) ->
     Retained::autorelease_return(NSString::from_str(accessibility_contents.as_str())).cast()
 }
 
+/// Returns the focused view's active selected text for platform accessibility
+/// (macOS Speak Selection). Mirrors `warp_get_accessibility_contents` but reads
+/// `AccessibilityData::selected_text`; returns an empty string when there is no
+/// active text selection. The Obj-C side must query this live (never cache) so
+/// the answer tracks focus changes, selection clearing, and terminal updates.
+#[no_mangle]
+pub extern "C-unwind" fn warp_get_accessibility_selected_text(object: &mut Object) -> id {
+    let state = unsafe { get_window_state(object) };
+    let window_id = state.window_id;
+    let accessibility_data = app::callback_dispatcher()
+        .with_mutable_app_context(|app| app.focused_view_accessibility_data(window_id));
+
+    let selected_text = accessibility_data
+        .and_then(|data| data.selected_text)
+        .unwrap_or_default();
+    // Hand the autoreleased NSString back to the Objective-C caller as an `id`.
+    Retained::autorelease_return(NSString::from_str(selected_text.as_str())).cast()
+}
+
 #[no_mangle]
 pub extern "C-unwind" fn warp_ime_position(object: &mut Object, content_rect: NSRect) -> NSRect {
     let state = unsafe { get_window_state(object) };

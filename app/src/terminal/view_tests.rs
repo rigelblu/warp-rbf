@@ -16,6 +16,7 @@ use warpui::platform::WindowStyle;
 use warpui::{App, Presenter, ReadModel, WindowInvalidation};
 
 use super::*;
+use crate::ActiveAgentViewsModel;
 use crate::ai::agent::conversation::{AIConversation, ConversationStatus};
 use crate::ai::agent::task::TaskId;
 use crate::ai::agent::{
@@ -62,12 +63,12 @@ use crate::terminal::cli_agent_sessions::{
 };
 use crate::terminal::model::ansi::{self, BootstrappedValue, InitShellValue, PreexecValue};
 use crate::terminal::model::block::AgentViewVisibility;
-use crate::terminal::model::blocks::{insert_block, TotalIndex};
+use crate::terminal::model::blocks::{TotalIndex, insert_block};
 use crate::terminal::model::grid::Dimensions as _;
 use crate::terminal::model::terminal_model::WithinBlock;
 use crate::terminal::session_settings::AgentToolbarChipSelection;
 use crate::terminal::shared_session::shared_handlers::{
-    apply_cli_agent_state_update, RemoteUpdateGuard,
+    RemoteUpdateGuard, apply_cli_agent_state_update,
 };
 use crate::terminal::shared_session::{SharedSessionSource, SharedSessionStatus};
 use crate::terminal::view::ambient_agent::AmbientAgentViewModelEvent;
@@ -82,7 +83,6 @@ use crate::test_util::terminal::{
 use crate::test_util::{add_window_with_terminal, assert_eventually};
 use crate::view_components::find::FindWithinBlockState;
 use crate::workspace::ToastStack;
-use crate::ActiveAgentViewsModel;
 
 fn add_window_with_cloud_mode_terminal(app: &mut App) -> ViewHandle<TerminalView> {
     let tips_model = app.add_model(|_| Default::default());
@@ -626,9 +626,11 @@ fn unregister_cli_agent_session_restores_unlocked_input_config() {
                 sessions.remove_session(view.view_id, ctx);
             });
             assert!(!view.has_active_cli_agent_input_session(ctx));
-            assert!(CLIAgentSessionsModel::as_ref(ctx)
-                .session(view.view_id)
-                .is_none());
+            assert!(
+                CLIAgentSessionsModel::as_ref(ctx)
+                    .session(view.view_id)
+                    .is_none()
+            );
         });
 
         terminal.read(&app, |view, ctx| {
@@ -1092,10 +1094,12 @@ fn clicking_old_banner_for_open_conversation_focuses_current_owner_without_trans
                 history.terminal_view_id_for_conversation(&conversation_id),
                 Some(restored_view_id)
             );
-            assert!(history
-                .all_live_conversations_for_terminal_view(original_owner_view_id)
-                .next()
-                .is_none());
+            assert!(
+                history
+                    .all_live_conversations_for_terminal_view(original_owner_view_id)
+                    .next()
+                    .is_none()
+            );
         });
         original_owner.read(&app, |view, _| {
             assert_eq!(ai_block_count(view), 0);
@@ -1396,10 +1400,11 @@ fn root_cloud_mode_pane_sets_root_cloud_mode_context_key() {
         let nested_terminal = add_window_with_cloud_mode_terminal(&mut app);
 
         terminal.read(&app, |view, ctx| {
-            assert!(view
-                .keymap_context(ctx)
-                .set
-                .contains(init::ROOT_CLOUD_MODE_PANE_KEY));
+            assert!(
+                view.keymap_context(ctx)
+                    .set
+                    .contains(init::ROOT_CLOUD_MODE_PANE_KEY)
+            );
         });
 
         let root_view = terminal.clone();
@@ -1429,17 +1434,20 @@ fn root_cloud_mode_pane_sets_root_cloud_mode_context_key() {
         });
 
         terminal.read(&app, |view, ctx| {
-            assert!(view
-                .keymap_context(ctx)
-                .set
-                .contains(init::ROOT_CLOUD_MODE_PANE_KEY));
+            assert!(
+                view.keymap_context(ctx)
+                    .set
+                    .contains(init::ROOT_CLOUD_MODE_PANE_KEY)
+            );
         });
 
         nested_terminal.read(&app, |view, ctx| {
-            assert!(!view
-                .keymap_context(ctx)
-                .set
-                .contains(init::ROOT_CLOUD_MODE_PANE_KEY));
+            assert!(
+                !view
+                    .keymap_context(ctx)
+                    .set
+                    .contains(init::ROOT_CLOUD_MODE_PANE_KEY)
+            );
         });
     });
 }
@@ -2053,11 +2061,12 @@ fn cmd_enter_from_terminal_without_selected_block_enters_agent_view() {
         let (window_id, terminal) = add_window_with_id_and_terminal(&mut app, None);
 
         terminal.update(&mut app, |view, ctx| {
-            assert!(view
-                .ai_context_model
-                .as_ref(ctx)
-                .pending_context_block_ids()
-                .is_empty());
+            assert!(
+                view.ai_context_model
+                    .as_ref(ctx)
+                    .pending_context_block_ids()
+                    .is_empty()
+            );
             view.focus_terminal(ctx);
         });
 
@@ -2080,16 +2089,18 @@ fn cmd_enter_from_terminal_without_selected_block_enters_agent_view() {
         );
 
         terminal.read(&app, |view, ctx| {
-            assert!(view
-                .agent_view_controller()
-                .as_ref(ctx)
-                .agent_view_state()
-                .is_fullscreen());
-            assert!(view
-                .ai_context_model
-                .as_ref(ctx)
-                .pending_context_block_ids()
-                .is_empty());
+            assert!(
+                view.agent_view_controller()
+                    .as_ref(ctx)
+                    .agent_view_state()
+                    .is_fullscreen()
+            );
+            assert!(
+                view.ai_context_model
+                    .as_ref(ctx)
+                    .pending_context_block_ids()
+                    .is_empty()
+            );
         });
     });
 }
@@ -2121,11 +2132,12 @@ fn cmd_enter_from_terminal_with_selected_block_enters_agent_view_with_context() 
             };
 
             view.integration_test_change_block_selection_to_single(selected_block_index, ctx);
-            assert!(view
-                .ai_context_model
-                .as_ref(ctx)
-                .pending_context_block_ids()
-                .contains(&selected_block_id));
+            assert!(
+                view.ai_context_model
+                    .as_ref(ctx)
+                    .pending_context_block_ids()
+                    .contains(&selected_block_id)
+            );
             view.focus_terminal(ctx);
             selected_block_id
         });
@@ -2443,8 +2455,8 @@ fn test_clear_session_flag_state() {
     use warp_terminal::shell::ShellType;
 
     use crate::ai::blocklist::SerializedBlockListItem;
-    use crate::terminal::model::block::SerializedBlock;
     use crate::terminal::ShellHost;
+    use crate::terminal::model::block::SerializedBlock;
 
     App::test((), |mut app| async move {
         initialize_app_for_terminal_view(&mut app);
@@ -2511,9 +2523,11 @@ fn test_clear_session_flag_state() {
 }
 
 fn assert_block_has_find_match(find_model: &TerminalFindModel, block_index: BlockIndex) {
-    assert!(find_model
-        .block_list_find_run()
-        .is_some_and(|run| run.matches_for_block(block_index).next().is_some()));
+    assert!(
+        find_model
+            .block_list_find_run()
+            .is_some_and(|run| run.matches_for_block(block_index).next().is_some())
+    );
 }
 
 impl TerminalView {
@@ -2668,6 +2682,55 @@ fn test_insert() {
         assert_input_text_eq(&mut app, "hello_this_is_your_captain_speaking");
         assert_selected_blocks_cardinality_eq(&mut app, BlockSelectionCardinality::None);
         assert_selected_text_eq(&mut app, Some("f".to_owned()));
+    })
+}
+
+#[test]
+fn test_accessibility_data_prefers_input_selected_text() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+
+        terminal.update(&mut app, |view, ctx| {
+            view.focus_terminal(ctx);
+            view.typed_characters_on_terminal("prompt selection", ctx);
+            view.input.update(ctx, |input, ctx| {
+                input
+                    .editor()
+                    .update(ctx, |editor, ctx| editor.select_all(ctx));
+            });
+
+            let selected_text = view
+                .accessibility_data(ctx)
+                .and_then(|data| data.selected_text);
+            assert_eq!(selected_text.as_deref(), Some("prompt selection"));
+
+            {
+                let mut model = view.model.lock();
+                let blocks = model.block_list_mut();
+                let block_index = insert_block(blocks, "cmd_a\n", "output_a\n");
+                let block = blocks.block_at(block_index).expect("block should exist");
+                let command_grid_offset = block.command_grid_offset();
+
+                blocks.start_selection(
+                    BlockListPoint::new(command_grid_offset, 0),
+                    SelectionType::Simple,
+                    Side::Left,
+                );
+                blocks.update_selection(BlockListPoint::new(command_grid_offset, 3), Side::Right);
+            }
+
+            let terminal_selected_text = view.selected_text(ctx).filter(|text| !text.is_empty());
+            assert!(
+                terminal_selected_text.is_some(),
+                "expected an active terminal output selection"
+            );
+
+            let selected_text = view
+                .accessibility_data(ctx)
+                .and_then(|data| data.selected_text);
+            assert_eq!(selected_text.as_deref(), Some("prompt selection"));
+        });
     })
 }
 
@@ -3364,10 +3427,12 @@ fn test_stable_scrolling_during_grid_truncation() {
                 // Create a dummy, finished block and a long-running block.
                 model.simulate_block("ls", "foo");
                 model.simulate_long_running_block("cat", "");
-                assert!(model
-                    .block_list()
-                    .active_block()
-                    .is_active_and_long_running());
+                assert!(
+                    model
+                        .block_list()
+                        .active_block()
+                        .is_active_and_long_running()
+                );
 
                 // Add enough newlines so that the long-running block spans at
                 // least the viewport and surely exceeds the grid size.
@@ -5216,12 +5281,13 @@ fn inline_agent_view_exits_when_tagged_in_long_running_command_is_tagged_out() {
                 .set_is_agent_tagged_in(true);
 
             assert!(view.agent_view_controller().as_ref(ctx).is_inline());
-            assert!(view
-                .model
-                .lock()
-                .block_list()
-                .active_block()
-                .is_agent_tagged_in());
+            assert!(
+                view.model
+                    .lock()
+                    .block_list()
+                    .active_block()
+                    .is_agent_tagged_in()
+            );
 
             let model = view.model.lock();
             assert!(view.is_input_box_visible(&model, ctx));
@@ -5471,10 +5537,12 @@ fn use_agent_footer_renders_for_transfer_handoff_even_when_user_command_footer_s
                 let model = view.model.lock();
                 assert!(!view.should_render_use_agent_footer(&model, ctx));
                 let active_block_index = model.block_list().active_block_index();
-                assert!(model
-                    .block_list()
-                    .last_non_hidden_rich_content_block_after_block(Some(active_block_index))
-                    .is_none());
+                assert!(
+                    model
+                        .block_list()
+                        .last_non_hidden_rich_content_block_after_block(Some(active_block_index))
+                        .is_none()
+                );
             }
 
             let conversation_id = view.agent_view_controller().update(ctx, |controller, ctx| {
@@ -6146,10 +6214,12 @@ fn drag_drop_image_in_cli_agent_long_running_command_pastes_via_clipboard() {
             {
                 let mut model = view.model.lock();
                 model.simulate_long_running_block("claude", "");
-                assert!(model
-                    .block_list()
-                    .active_block()
-                    .is_active_and_long_running());
+                assert!(
+                    model
+                        .block_list()
+                        .active_block()
+                        .is_active_and_long_running()
+                );
             }
 
             view.drag_and_drop_files(&[image_path_str], ctx);
@@ -7164,18 +7234,20 @@ fn ctrl_c_does_not_accept_prompt_suggestion_banner() {
                 ctx,
             );
 
-            assert!(view
-                .inline_banners_state
-                .prompt_suggestions_banner
-                .is_some());
+            assert!(
+                view.inline_banners_state
+                    .prompt_suggestions_banner
+                    .is_some()
+            );
 
             // Ctrl-C should not accept the prompt suggestion.
             view.handle_action(&TerminalAction::CtrlC, ctx);
 
-            assert!(view
-                .inline_banners_state
-                .prompt_suggestions_banner
-                .is_some());
+            assert!(
+                view.inline_banners_state
+                    .prompt_suggestions_banner
+                    .is_some()
+            );
         });
     })
 }
@@ -7259,11 +7331,12 @@ fn linear_deeplink_does_not_auto_submit_when_already_in_agent_view() {
         });
 
         terminal.read(&app, |view, ctx| {
-            assert!(view
-                .agent_view_controller()
-                .as_ref(ctx)
-                .agent_view_state()
-                .is_fullscreen());
+            assert!(
+                view.agent_view_controller()
+                    .as_ref(ctx)
+                    .agent_view_state()
+                    .is_fullscreen()
+            );
         });
 
         // Now dispatch the Linear deeplink while already in fullscreen agent view.
@@ -7599,18 +7672,21 @@ fn cmd_k_does_not_clear_buffer_when_agent_is_driving_command() {
                 });
             set_active_block_agent_driving(view, conversation_id);
 
-            assert!(view
-                .model
-                .lock()
-                .block_list()
-                .active_block()
-                .is_agent_driving_command());
-            assert!(!view
-                .model
-                .lock()
-                .block_list()
-                .active_block()
-                .is_agent_monitoring());
+            assert!(
+                view.model
+                    .lock()
+                    .block_list()
+                    .active_block()
+                    .is_agent_driving_command()
+            );
+            assert!(
+                !view
+                    .model
+                    .lock()
+                    .block_list()
+                    .active_block()
+                    .is_agent_monitoring()
+            );
 
             let block_count_before = view.model.lock().block_list().blocks().len();
 
@@ -7649,17 +7725,19 @@ fn cmd_k_in_agent_view_clears_active_block_not_full_buffer_when_agent_driving_co
             bootstrap_with_long_running_block(view);
             set_active_block_agent_driving(view, conversation_id);
 
-            assert!(view
-                .agent_view_controller()
-                .as_ref(ctx)
-                .agent_view_state()
-                .is_fullscreen());
-            assert!(view
-                .model
-                .lock()
-                .block_list()
-                .active_block()
-                .is_agent_driving_command());
+            assert!(
+                view.agent_view_controller()
+                    .as_ref(ctx)
+                    .agent_view_state()
+                    .is_fullscreen()
+            );
+            assert!(
+                view.model
+                    .lock()
+                    .block_list()
+                    .active_block()
+                    .is_agent_driving_command()
+            );
 
             conversation_id
         });
