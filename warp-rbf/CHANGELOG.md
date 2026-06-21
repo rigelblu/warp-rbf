@@ -6,6 +6,10 @@ title: Changelog
 
 ---
 
+# 🔵⋯ v0.4.0 (2026-06-21)
+## 🟠⋯ Fixed
+- macOS Speak Selection reads the selection, not the whole pane | with text selected, Speak Selection (`⌥Esc`) reads just the selection instead of starting from the top of the pane (#warp-02)
+
 # 🔵⋯ v0.3.0 (2026-06-21)
 ## 🟠⋯ Added
 - skills hot-reload across home and project scopes | edited, added, or removed skills in home-level providers or the active project reload live instead of going stale until you restart (#warp-01)
