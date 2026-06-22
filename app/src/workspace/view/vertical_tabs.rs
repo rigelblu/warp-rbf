@@ -505,6 +505,19 @@ fn render_pane_row_element(
         is_pinned,
         container_is_hovered,
     } = props;
+    // While a tab/pane is being renamed, drop its color so the inline rename
+    // editor stays legible. An active colored tab fills its row with a strong tint
+    // of its color, but the shared rename `EditorView` draws with theme-default
+    // colors (the contrast-pick that adapts the row's own content doesn't reach
+    // it) — so neutralize the row for the rename: `pane_color` None makes it the
+    // neutral selected lift. The color returns when the rename ends. (warp-32
+    // rename-contrast; adapting the editor's own colors was rejected — it inherits
+    // the per-color readability edge cases.)
+    let pane_color = if is_tab_being_renamed || is_pane_being_renamed {
+        None
+    } else {
+        pane_color
+    };
     let is_selected = is_active_tab && is_focused;
     // Resting (non-hovered) row background, used to pick a readable pin-icon
     // color against a colored tab's background. The pin only shows when the row
