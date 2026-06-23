@@ -122,6 +122,26 @@ impl SlashCommandTrigger {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NameWindowCommandArgument {
+    Set(String),
+    Clear,
+}
+
+fn parse_name_window_argument(
+    argument: Option<&str>,
+) -> Result<NameWindowCommandArgument, &'static str> {
+    let Some(name) = argument.map(str::trim).filter(|name| !name.is_empty()) else {
+        return Err("Usage: /name-window <name> or /name-window --clear");
+    };
+
+    if name == "--clear" {
+        Ok(NameWindowCommandArgument::Clear)
+    } else {
+        Ok(NameWindowCommandArgument::Set(name.to_owned()))
+    }
+}
+
 #[cfg(feature = "local_fs")]
 fn open_file_command_path(
     session: &Session,
@@ -504,6 +524,20 @@ impl Input {
                 };
 
                 ctx.dispatch_typed_action(&WorkspaceAction::SetActiveTabName(name.to_owned()));
+            }
+            _ if command.name == commands::NAME_WINDOW.name => {
+                match parse_name_window_argument(argument.map(String::as_str)) {
+                    Ok(NameWindowCommandArgument::Set(name)) => {
+                        ctx.dispatch_typed_action(&WorkspaceAction::SetActiveWindowName(name));
+                    }
+                    Ok(NameWindowCommandArgument::Clear) => {
+                        ctx.dispatch_typed_action(&WorkspaceAction::ResetActiveWindowName);
+                    }
+                    Err(message) => {
+                        show_error_toast(message.to_owned(), ctx);
+                        return true;
+                    }
+                }
             }
             _ if command.name == commands::RENAME_CONVERSATION.name => {
                 let Some(conversation_id) = self

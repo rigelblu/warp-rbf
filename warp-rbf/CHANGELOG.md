@@ -6,6 +6,10 @@ title: Changelog
 
 ---
 
+# 🔵⋯ v0.7.0 (2026-06-23)
+## 🟠⋯ Added
+- name a window from Warp's command surface | use `/name-window <name>` to give the current window a persistent name that shows in macOS window surfaces and survives restart; `/name-window --clear` returns to the active-tab title (#warp-06)
+
 # 🔵⋯ v0.6.0 (2026-06-21)
 ## 🟠⋯ Added
 - colored vertical tabs read clearly, and the active one is unmistakable | a colored tab shows a full-strength color stripe on its leading edge with a faint matching row tint; the active tab fills its row with a strong tint of its color — the one vivid block, with white text on saturated colors (#warp-32)

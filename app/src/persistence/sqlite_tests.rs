@@ -286,6 +286,7 @@ fn test_terminal_window_snapshot(vertical_tabs_panel_open: bool) -> WindowSnapsh
             pinned: false,
         }],
         active_tab_index: 0,
+        custom_title: None,
         bounds: None,
         fullscreen_state: Default::default(),
         quake_mode: false,
@@ -336,6 +337,34 @@ fn test_sqlite_round_trips_vertical_tabs_panel_open() {
 }
 
 #[test]
+fn test_sqlite_round_trips_window_custom_title() {
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let database_path = tempdir.path().join("warp.sqlite");
+    let mut conn = setup_database(&database_path).expect("database should initialize");
+
+    let mut window = test_terminal_window_snapshot(false);
+    window.custom_title = Some("Production Logs".to_string());
+
+    let app_state = AppState {
+        windows: vec![window],
+        active_window_index: Some(0),
+        block_lists: Default::default(),
+        running_mcp_servers: Default::default(),
+    };
+
+    save_app_state(&mut conn, &app_state).expect("app state should save");
+
+    let restored = read_sqlite_data(&mut conn, None)
+        .expect("app state should load")
+        .app_state;
+
+    assert_eq!(
+        restored.windows[0].custom_title.as_deref(),
+        Some("Production Logs")
+    );
+}
+
+#[test]
 fn test_sqlite_round_trips_custom_vertical_tabs_title() {
     let tempdir = tempfile::tempdir().expect("tempdir should be created");
     let database_path = tempdir.path().join("warp.sqlite");
@@ -372,6 +401,7 @@ fn test_sqlite_round_trips_custom_vertical_tabs_title() {
                 pinned: false,
             }],
             active_tab_index: 0,
+            custom_title: None,
             bounds: None,
             fullscreen_state: Default::default(),
             quake_mode: false,
@@ -449,6 +479,7 @@ fn test_sqlite_round_trips_code_pane_with_multiple_tabs() {
                 pinned: false,
             }],
             active_tab_index: 0,
+            custom_title: None,
             bounds: None,
             fullscreen_state: Default::default(),
             quake_mode: false,
@@ -566,6 +597,7 @@ fn test_sqlite_round_trips_tab_groups() {
         windows: vec![WindowSnapshot {
             tabs: vec![tab_in_group, tab_outside_group],
             active_tab_index: 0,
+            custom_title: None,
             bounds: None,
             fullscreen_state: Default::default(),
             quake_mode: false,
@@ -716,6 +748,7 @@ fn test_sqlite_round_trips_pinned_state() {
         windows: vec![WindowSnapshot {
             tabs: vec![pinned_tab, tab_in_pinned_group, unpinned_tab],
             active_tab_index: 0,
+            custom_title: None,
             bounds: None,
             fullscreen_state: Default::default(),
             quake_mode: false,

@@ -670,6 +670,14 @@ const MAX_FORK_TOAST_TITLE_LENGTH: usize = 100;
 // The max length of the window title (matching conversation title truncation).
 const MAX_WINDOW_TITLE_LENGTH: usize = 80;
 
+fn resolved_window_title(custom_title: Option<&str>, tab_title: &str) -> String {
+    let title = custom_title
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .unwrap_or(tab_title);
+    truncate_from_end(title, MAX_WINDOW_TITLE_LENGTH)
+}
+
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 const AUTO_CLOUD_HANDOFF_PROMPT: &str =
     "Continue this local Warp Agent task in the cloud from the current conversation state.";
@@ -989,6 +997,7 @@ enum TabBarSlot {
 
 pub struct Workspace {
     window_id: WindowId,
+    custom_title: Option<String>,
     pub(crate) tabs: Vec<TabData>,
     active_tab_index: usize,
     /// Tracks tab activation order (most-recently-used first).
@@ -3318,7 +3327,15 @@ impl Workspace {
             },
         );
 
+        let custom_title = match &workspace_setting {
+            NewWorkspaceSource::Restored {
+                window_snapshot, ..
+            } => window_snapshot.custom_title.clone(),
+            _ => None,
+        };
+
         let mut ws = Self {
+            custom_title,
             tabs: Vec::new(),
             active_tab_index: 0,
             tab_mru_order: Vec::new(),
@@ -5394,10 +5411,28 @@ impl Workspace {
         };
         let tab_title = tab.pane_group.as_ref(ctx).display_title(ctx);
 
-        let window_title = truncate_from_end(&tab_title, MAX_WINDOW_TITLE_LENGTH);
+        let window_title = resolved_window_title(self.custom_title.as_deref(), &tab_title);
 
         let window_id = ctx.window_id();
         ctx.windows().set_window_title(window_id, &window_title);
+    }
+
+    fn set_active_window_name(&mut self, title: &str, ctx: &mut ViewContext<Self>) {
+        let title = title.trim();
+        if title.is_empty() {
+            ctx.notify();
+            return;
+        }
+
+        self.custom_title = Some(title.to_owned());
+        self.update_window_title(ctx);
+        ctx.notify();
+    }
+
+    fn reset_active_window_name(&mut self, ctx: &mut ViewContext<Self>) {
+        self.custom_title = None;
+        self.update_window_title(ctx);
+        ctx.notify();
     }
 
     fn rename_tab_internal(&mut self, index: usize, title: &str, ctx: &mut ViewContext<Self>) {
@@ -11404,6 +11439,7 @@ impl Workspace {
         WindowSnapshot {
             tabs,
             active_tab_index,
+            custom_title: self.custom_title.clone(),
             bounds: window_bounds,
             fullscreen_state: window_fullscreen_state,
             quake_mode,
@@ -23308,6 +23344,8 @@ impl TypedActionView for Workspace {
                 );
             }
             SetActiveTabName(name) => self.set_active_tab_name(name, ctx),
+            SetActiveWindowName(name) => self.set_active_window_name(name, ctx),
+            ResetActiveWindowName => self.reset_active_window_name(ctx),
             SetActiveTabColor(color) => self.set_tab_color(self.active_tab_index, *color, ctx),
             ToggleTabRightClickMenu { tab_index, anchor } => {
                 self.toggle_tab_right_click_menu(*tab_index, *anchor, ctx)

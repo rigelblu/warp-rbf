@@ -439,6 +439,7 @@ diesel::table! {
     windows (id) {
         id -> Integer,
         active_tab_index -> Integer,
+        custom_title -> Nullable<Text>,
         window_width -> Nullable<Float>,
         window_height -> Nullable<Float>,
         origin_x -> Nullable<Float>,
