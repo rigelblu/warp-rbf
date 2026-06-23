@@ -27,6 +27,25 @@ fn rename_tab_command_requires_argument() {
 }
 
 #[test]
+fn name_window_command_requires_argument() {
+    let command = COMMAND_REGISTRY
+        .get_command_with_name(NAME_WINDOW.name)
+        .expect("expected /name-window to be registered");
+    let argument = command
+        .argument
+        .as_ref()
+        .expect("expected /name-window to require an argument");
+
+    assert_eq!(command.name, "/name-window");
+    assert_eq!(command.icon_path, "bundled/svg/pencil-line.svg");
+    assert_eq!(command.availability, Availability::ALWAYS);
+    assert!(!command.auto_enter_ai_mode);
+    assert!(!argument.is_optional);
+    assert!(!argument.should_execute_on_selection);
+    assert_eq!(argument.hint_text, Some("<name | --clear>"));
+}
+
+#[test]
 fn rename_conversation_command_is_active_conversation_scoped_and_requires_argument() {
     let command = COMMAND_REGISTRY
         .get_command_with_name(RENAME_CONVERSATION.name)

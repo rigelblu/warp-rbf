@@ -34,6 +34,11 @@ This is my ~~fork~~ flavour of [Warp](https://github.com/warpdotdev/Warp), simil
 **Colored tabs contrast improvements**
 — tell inactive tab colors apart, and see which colored tab is active at a glance.
 
+**Name a window** (macOS)
+— give a window a persistent name that shows in the title bar, the Window menu, and Mission Control.
+- `/name-window <name>`
+- `/name-window --clear`
+
 ## 🟠⋯ Settings, Themes, And Data
 Copy your regular warp configs
 ```

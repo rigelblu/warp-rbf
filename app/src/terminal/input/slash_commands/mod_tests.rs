@@ -1,8 +1,39 @@
 use crate::features::FeatureFlag;
 use crate::search::slash_command_menu::static_commands::{commands, Availability};
+
+use super::{parse_name_window_argument, NameWindowCommandArgument};
+
 const BASELINE_AVAILABILITY: Availability = Availability::AGENT_VIEW
     .union(Availability::AI_ENABLED)
     .union(Availability::NO_LRC_CONTROL);
+
+#[test]
+fn name_window_argument_sets_trimmed_name() {
+    assert_eq!(
+        parse_name_window_argument(Some("  Production Logs  ")),
+        Ok(NameWindowCommandArgument::Set(
+            "Production Logs".to_string()
+        ))
+    );
+}
+
+#[test]
+fn name_window_argument_clears_only_on_exact_clear_flag() {
+    assert_eq!(
+        parse_name_window_argument(Some("--clear")),
+        Ok(NameWindowCommandArgument::Clear)
+    );
+    assert_eq!(
+        parse_name_window_argument(Some("--clear later")),
+        Ok(NameWindowCommandArgument::Set("--clear later".to_string()))
+    );
+}
+
+#[test]
+fn name_window_argument_rejects_missing_or_blank_name() {
+    assert!(parse_name_window_argument(None).is_err());
+    assert!(parse_name_window_argument(Some("   ")).is_err());
+}
 
 #[test]
 fn not_cloud_agent_commands_are_only_active_outside_cloud_mode() {

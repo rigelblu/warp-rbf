@@ -89,6 +89,30 @@ use crate::workspaces::user_workspaces::UserWorkspaces;
 use crate::{
     experiments, workspace, AgentNotificationsModel, GlobalResourceHandlesProvider, ObjectActions,
 };
+
+#[test]
+fn resolved_window_title_prefers_nonblank_custom_title() {
+    let long_title = "a".repeat(MAX_WINDOW_TITLE_LENGTH + 10);
+
+    assert_eq!(resolved_window_title(None, "active tab"), "active tab");
+    assert_eq!(
+        resolved_window_title(Some("Production Logs"), "active tab"),
+        "Production Logs"
+    );
+    assert_eq!(
+        resolved_window_title(Some("  Production Logs  "), "active tab"),
+        "Production Logs"
+    );
+    assert_eq!(
+        resolved_window_title(Some("   "), "active tab"),
+        "active tab"
+    );
+    assert_eq!(
+        resolved_window_title(Some(&long_title), "active tab"),
+        truncate_from_end(&long_title, MAX_WINDOW_TITLE_LENGTH)
+    );
+}
+
 #[test]
 fn query_for_rewind_prefill_uses_custom_display_query_inputs() {
     let context: std::sync::Arc<[crate::ai::agent::AIAgentContext]> = Vec::new().into();
@@ -1102,6 +1126,32 @@ fn test_set_active_tab_name() {
                     .as_deref(),
                 Some("Backend API")
             );
+        });
+    });
+}
+
+#[test]
+fn test_name_window_action_set_blank_and_reset() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let workspace = mock_workspace(&mut app);
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(
+                &WorkspaceAction::SetActiveWindowName("  Production Logs  ".to_string()),
+                ctx,
+            );
+            assert_eq!(workspace.custom_title.as_deref(), Some("Production Logs"));
+
+            workspace.handle_action(
+                &WorkspaceAction::SetActiveWindowName("   ".to_string()),
+                ctx,
+            );
+            assert_eq!(workspace.custom_title.as_deref(), Some("Production Logs"));
+
+            workspace.handle_action(&WorkspaceAction::ResetActiveWindowName, ctx);
+            assert_eq!(workspace.custom_title, None);
         });
     });
 }

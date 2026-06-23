@@ -895,6 +895,7 @@ fn save_app_state(conn: &mut SqliteConnection, app_state: &AppState) -> Result<(
 
             let new_window = NewWindow {
                 active_tab_index,
+                custom_title: window.custom_title.clone(),
                 window_width,
                 window_height,
                 origin_x,
@@ -2582,6 +2583,7 @@ fn read_sqlite_data(
                 WindowSnapshot {
                     tabs: saved_tabs,
                     active_tab_index: tab_index,
+                    custom_title: window.custom_title,
                     quake_mode: window.quake_mode,
                     bounds,
                     universal_search_width: window.universal_search_width,

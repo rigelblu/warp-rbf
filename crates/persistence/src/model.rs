@@ -30,6 +30,7 @@ pub struct NewApp {
 pub struct Window {
     pub id: i32,
     pub active_tab_index: i32,
+    pub custom_title: Option<String>,
     pub window_width: Option<f32>,
     pub window_height: Option<f32>,
     pub origin_x: Option<f32>,
@@ -327,6 +328,7 @@ pub struct NewObjectMetadata {
 #[diesel(table_name = windows)]
 pub struct NewWindow {
     pub active_tab_index: i32,
+    pub custom_title: Option<String>,
     pub window_width: Option<f32>,
     pub window_height: Option<f32>,
     pub origin_x: Option<f32>,
