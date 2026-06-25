@@ -3782,6 +3782,9 @@ impl Workspace {
                 }
                 ctx.notify();
             }
+            TabSettingsChangedEvent::TabColorSlotLabels { .. } => {
+                ctx.notify();
+            }
             TabSettingsChangedEvent::VerticalTabsViewMode { .. }
             | TabSettingsChangedEvent::VerticalTabsTabItemMode { .. }
             | TabSettingsChangedEvent::VerticalTabsPrimaryInfo { .. }

@@ -137,6 +137,15 @@ pub static RENAME_TAB: LazyLock<StaticCommand> = LazyLock::new(|| StaticCommand 
     argument: Some(Argument::required().with_hint_text("<tab name>")),
 });
 
+pub static RENAME_TAB_COLOR: LazyLock<StaticCommand> = LazyLock::new(|| StaticCommand {
+    name: "/rename-tab-color",
+    description: "Rename a tab color slot",
+    icon_path: "bundled/svg/pencil-line.svg",
+    availability: Availability::ALWAYS,
+    auto_enter_ai_mode: false,
+    argument: Some(Argument::optional().with_hint_text("<default|color> <label | --clear>")),
+});
+
 pub static NAME_WINDOW: LazyLock<StaticCommand> = LazyLock::new(|| StaticCommand {
     name: "/name-window",
     description: "Name the current window",
@@ -158,7 +167,7 @@ pub static RENAME_CONVERSATION: LazyLock<StaticCommand> = LazyLock::new(|| Stati
 });
 
 static SET_TAB_COLOR_HINT: LazyLock<String> = LazyLock::new(|| {
-    let mut hint = String::from("<");
+    let mut hint = String::from("<default|");
     for color in color_dot::TAB_COLOR_OPTIONS {
         hint.push_str(&color.to_string().to_ascii_lowercase());
         hint.push('|');
@@ -648,6 +657,7 @@ fn all_commands() -> Vec<StaticCommand> {
         PLAN.clone(),
         RENAME_CONVERSATION.clone(),
         NAME_WINDOW.clone(),
+        RENAME_TAB_COLOR.clone(),
         RENAME_TAB.clone(),
         SET_TAB_COLOR.clone(),
         USAGE,

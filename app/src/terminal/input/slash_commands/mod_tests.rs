@@ -1,7 +1,14 @@
 use crate::features::FeatureFlag;
 use crate::search::slash_command_menu::static_commands::{commands, Availability};
+use crate::workspace::tab_settings::{TabColorSlot, TabColorSlotLabels};
+use warp_core::ui::theme::AnsiColorIdentifier;
 
-use super::{parse_name_window_argument, NameWindowCommandArgument};
+use super::{
+    parse_name_window_argument, parse_rename_tab_color_argument, parse_set_tab_color_argument,
+    NameWindowCommandArgument, RenameTabColorCommandArgument,
+};
+use crate::tab::SelectedTabColor;
+use crate::ui_components::color_dot::TAB_COLOR_OPTIONS;
 
 const BASELINE_AVAILABILITY: Availability = Availability::AGENT_VIEW
     .union(Availability::AI_ENABLED)
@@ -33,6 +40,107 @@ fn name_window_argument_clears_only_on_exact_clear_flag() {
 fn name_window_argument_rejects_missing_or_blank_name() {
     assert!(parse_name_window_argument(None).is_err());
     assert!(parse_name_window_argument(Some("   ")).is_err());
+}
+
+#[test]
+fn rename_tab_color_argument_sets_trimmed_label() {
+    assert_eq!(
+        parse_rename_tab_color_argument(Some(" blue   GOAL: primary  "), &TAB_COLOR_OPTIONS,),
+        Ok(RenameTabColorCommandArgument::Set {
+            slot: TabColorSlot::Blue,
+            label: "GOAL: primary".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn rename_tab_color_argument_sets_quoted_default_label() {
+    assert_eq!(
+        parse_rename_tab_color_argument(Some(" default   \"Inactive\"  "), &TAB_COLOR_OPTIONS,),
+        Ok(RenameTabColorCommandArgument::Set {
+            slot: TabColorSlot::Default,
+            label: "Inactive".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn rename_tab_color_argument_clears_only_on_exact_clear_flag_after_color() {
+    assert_eq!(
+        parse_rename_tab_color_argument(Some("blue --clear"), &TAB_COLOR_OPTIONS),
+        Ok(RenameTabColorCommandArgument::Clear {
+            slot: TabColorSlot::Blue,
+        })
+    );
+    assert_eq!(
+        parse_rename_tab_color_argument(Some("default --clear"), &TAB_COLOR_OPTIONS),
+        Ok(RenameTabColorCommandArgument::Clear {
+            slot: TabColorSlot::Default,
+        })
+    );
+    assert_eq!(
+        parse_rename_tab_color_argument(Some("blue --clear later"), &TAB_COLOR_OPTIONS),
+        Ok(RenameTabColorCommandArgument::Set {
+            slot: TabColorSlot::Blue,
+            label: "--clear later".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn rename_tab_color_argument_rejects_missing_unknown_or_blank_label() {
+    assert!(parse_rename_tab_color_argument(None, &TAB_COLOR_OPTIONS).is_err());
+    assert!(parse_rename_tab_color_argument(Some("   "), &TAB_COLOR_OPTIONS).is_err());
+    assert!(parse_rename_tab_color_argument(Some("black Work"), &TAB_COLOR_OPTIONS).is_err());
+    assert!(parse_rename_tab_color_argument(Some("blue   "), &TAB_COLOR_OPTIONS).is_err());
+}
+
+#[test]
+fn set_tab_color_argument_resolves_raw_color_custom_label_and_none() {
+    let labels = TabColorSlotLabels::default()
+        .with_label(
+            AnsiColorIdentifier::Blue,
+            "GOAL: primary",
+            &TAB_COLOR_OPTIONS,
+        )
+        .expect("blue label should save")
+        .with_label(TabColorSlot::Default, "Inactive", &TAB_COLOR_OPTIONS)
+        .expect("default label should save");
+
+    assert_eq!(
+        parse_set_tab_color_argument(Some("blue"), &labels),
+        Ok(SelectedTabColor::Color(AnsiColorIdentifier::Blue))
+    );
+    assert_eq!(
+        parse_set_tab_color_argument(Some("  goal: PRIMARY  "), &labels),
+        Ok(SelectedTabColor::Color(AnsiColorIdentifier::Blue))
+    );
+    assert_eq!(
+        parse_set_tab_color_argument(Some("none"), &labels),
+        Ok(SelectedTabColor::Cleared)
+    );
+    assert_eq!(
+        parse_set_tab_color_argument(Some("default"), &labels),
+        Ok(SelectedTabColor::Cleared)
+    );
+    assert_eq!(
+        parse_set_tab_color_argument(Some("inactive"), &labels),
+        Ok(SelectedTabColor::Cleared)
+    );
+    assert!(parse_set_tab_color_argument(Some("goal"), &labels).is_err());
+}
+
+#[test]
+fn rename_tab_color_rejects_reserved_default_and_color_labels() {
+    let labels = TabColorSlotLabels::default();
+
+    for label in ["default", "none", "red", "black", "WHITE"] {
+        assert_eq!(
+            labels.with_label(TabColorSlot::Blue, label, &TAB_COLOR_OPTIONS),
+            Err(crate::workspace::tab_settings::TabColorSlotLabelError::ReservedLabel),
+            "{label} should be reserved"
+        );
+    }
 }
 
 #[test]

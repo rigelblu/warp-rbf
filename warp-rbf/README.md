@@ -39,6 +39,11 @@ This is my ~~fork~~ flavour of [Warp](https://github.com/warpdotdev/Warp), simil
 - `/name-window <name>`
 - `/name-window --clear`
 
+**Rename tab color slots**
+— label the six tab colors for what they mean in your workflow (e.g. "default" → `INACTIVE`, "blue"  → `PRIMARY`) instead of memorizing colors.
+- `/rename-tab-color <color> <label>`
+- `/rename-tab-color <color> --clear`
+
 ## 🟠⋯ Settings, Themes, And Data
 Copy your regular warp configs
 ```
