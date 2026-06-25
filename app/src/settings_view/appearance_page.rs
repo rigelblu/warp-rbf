@@ -92,7 +92,7 @@ use crate::workspace::header_toolbar_editor::HeaderToolbarInlineEditor;
 use crate::workspace::tab_settings::{
     canonical_directory_key, DirectoryTabColor, HideTitleBarSearchBarInVerticalTabs,
     PreserveActiveTabColor, ShowCodeReviewButton, ShowIndicatorsButton,
-    ShowVerticalTabPanelInRestoredWindows, TabCloseButtonPosition, TabSettings,
+    ShowVerticalTabPanelInRestoredWindows, TabCloseButtonPosition, TabColorSlot, TabSettings,
     TabSettingsChangedEvent, UseLatestUserPromptAsConversationTitleInTabNames, UseVerticalTabs,
     WorkspaceDecorationVisibility,
 };
@@ -5081,9 +5081,10 @@ impl SettingsWidget for DirectoryTabColorsWidget {
                     Some(id) => id.to_ansi_color(&theme.terminal_colors().normal).into(),
                 };
                 let is_selected = current_color == tab_color;
+                let color_slot_labels = TabSettings::as_ref(app).color_slot_labels.value();
                 let tooltip_text = match ansi_id {
-                    None => "Default (no color)".to_string(),
-                    Some(id) => id.to_string(),
+                    None => color_slot_labels.display_label_for_slot(TabColorSlot::Default),
+                    Some(id) => color_slot_labels.display_label_for(id),
                 };
                 let dir_path_clone = PathBuf::from(&dir_path);
 

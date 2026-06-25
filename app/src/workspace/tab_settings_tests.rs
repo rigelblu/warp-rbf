@@ -6,6 +6,183 @@ use crate::test_util::settings::initialize_settings_for_tests;
 use crate::workspace::header_toolbar_item::HeaderToolbarItemKind;
 
 #[test]
+fn color_slot_labels_use_global_settings_sync_path() {
+    assert_eq!(
+        TabColorSlotLabels::toml_path(),
+        Some("appearance.tabs.color_slot_labels")
+    );
+    assert_eq!(
+        TabColorSlotLabels::sync_to_cloud(),
+        SyncToCloud::Globally(RespectUserSyncSetting::Yes)
+    );
+    assert_eq!(DirectoryTabColors::sync_to_cloud(), SyncToCloud::Never);
+}
+
+#[test]
+fn color_slot_labels_fall_back_to_raw_color_name() {
+    let labels = TabColorSlotLabels::default();
+    assert_eq!(labels.label_for_slot(TabColorSlot::Default), "Default");
+    assert_eq!(
+        labels.display_label_for_slot(TabColorSlot::Default),
+        "Default"
+    );
+    assert_eq!(labels.label_for(AnsiColorIdentifier::Blue), "Blue");
+    assert_eq!(labels.display_label_for(AnsiColorIdentifier::Blue), "Blue");
+}
+
+#[test]
+fn color_slot_labels_store_trimmed_unique_color_labels() {
+    let labels = TabColorSlotLabels::default()
+        .with_label(
+            AnsiColorIdentifier::Blue,
+            "  GOAL: primary  ",
+            &crate::ui_components::color_dot::TAB_COLOR_OPTIONS,
+        )
+        .expect("blue label should save");
+
+    assert_eq!(labels.label_for(AnsiColorIdentifier::Blue), "GOAL: primary");
+    assert_eq!(
+        labels.display_label_for(AnsiColorIdentifier::Blue),
+        "GOAL: primary (Blue)"
+    );
+    assert_eq!(
+        labels.resolve_label(
+            "goal: PRIMARY",
+            &crate::ui_components::color_dot::TAB_COLOR_OPTIONS
+        ),
+        Some(AnsiColorIdentifier::Blue)
+    );
+    assert_eq!(
+        labels.resolve_label("goal", &crate::ui_components::color_dot::TAB_COLOR_OPTIONS),
+        None
+    );
+}
+
+#[test]
+fn color_slot_labels_store_trimmed_default_label() {
+    let labels = TabColorSlotLabels::default()
+        .with_label(
+            TabColorSlot::Default,
+            "  Inactive  ",
+            &crate::ui_components::color_dot::TAB_COLOR_OPTIONS,
+        )
+        .expect("default label should save");
+
+    assert_eq!(labels.label_for_slot(TabColorSlot::Default), "Inactive");
+    assert_eq!(
+        labels.display_label_for_slot(TabColorSlot::Default),
+        "Inactive (Default)"
+    );
+    assert_eq!(
+        labels.resolve_slot_label(
+            "inactive",
+            &crate::ui_components::color_dot::TAB_COLOR_OPTIONS
+        ),
+        Some(TabColorSlot::Default)
+    );
+    assert_eq!(
+        labels.resolve_slot_label(
+            "default",
+            &crate::ui_components::color_dot::TAB_COLOR_OPTIONS
+        ),
+        Some(TabColorSlot::Default)
+    );
+    assert_eq!(
+        labels.resolve_slot_label("none", &crate::ui_components::color_dot::TAB_COLOR_OPTIONS),
+        Some(TabColorSlot::Default)
+    );
+}
+
+#[test]
+fn color_slot_labels_reject_duplicate_labels() {
+    let labels = TabColorSlotLabels::default()
+        .with_label(
+            TabColorSlot::Default,
+            "Inactive",
+            &crate::ui_components::color_dot::TAB_COLOR_OPTIONS,
+        )
+        .expect("default label should save");
+
+    assert_eq!(
+        labels.with_label(
+            AnsiColorIdentifier::Blue,
+            "inactive",
+            &crate::ui_components::color_dot::TAB_COLOR_OPTIONS,
+        ),
+        Err(TabColorSlotLabelError::DuplicateLabel)
+    );
+}
+
+#[test]
+fn color_slot_labels_reject_reserved_labels() {
+    let labels = TabColorSlotLabels::default();
+
+    for label in ["default", "none", "blue", "RED", "black", "WHITE"] {
+        assert_eq!(
+            labels.with_label(
+                TabColorSlot::Default,
+                label,
+                &crate::ui_components::color_dot::TAB_COLOR_OPTIONS,
+            ),
+            Err(TabColorSlotLabelError::ReservedLabel),
+            "{label} should be reserved"
+        );
+    }
+}
+
+#[test]
+fn color_slot_labels_normalize_persisted_values() {
+    let value = serde_json::json!({
+        "default": "  Inactive  ",
+        "black": "Dark",
+        "red": "black",
+        "green": "",
+        "blue": "GOAL: primary",
+        "magenta": "goal: PRIMARY",
+        "white": "Light",
+    });
+
+    let labels: TabColorSlotLabels =
+        serde_json::from_value(value.clone()).expect("persisted labels should deserialize");
+    assert_eq!(
+        labels.custom_label_for_slot(TabColorSlot::Default),
+        Some("Inactive")
+    );
+    assert_eq!(
+        labels.custom_label_for_slot(TabColorSlot::Blue),
+        Some("GOAL: primary")
+    );
+    assert_eq!(labels.custom_label_for_slot(TabColorSlot::Black), None);
+    assert_eq!(labels.custom_label_for_slot(TabColorSlot::Red), None);
+    assert_eq!(labels.custom_label_for_slot(TabColorSlot::Green), None);
+    assert_eq!(labels.custom_label_for_slot(TabColorSlot::Magenta), None);
+    assert_eq!(labels.custom_label_for_slot(TabColorSlot::White), None);
+    assert_eq!(
+        labels.resolve_label("black", &crate::ui_components::color_dot::TAB_COLOR_OPTIONS),
+        None
+    );
+
+    let file_labels =
+        <TabColorSlotLabels as settings_value::SettingsValue>::from_file_value(&value)
+            .expect("settings file labels should deserialize");
+    assert_eq!(file_labels, labels);
+}
+
+#[test]
+fn color_slot_labels_clear_back_to_default_name() {
+    let labels = TabColorSlotLabels::default()
+        .with_label(
+            AnsiColorIdentifier::Blue,
+            "GOAL: primary",
+            &crate::ui_components::color_dot::TAB_COLOR_OPTIONS,
+        )
+        .expect("blue label should save")
+        .without_label(AnsiColorIdentifier::Blue);
+
+    assert_eq!(labels.label_for(AnsiColorIdentifier::Blue), "Blue");
+}
+
+#[test]
 fn use_latest_user_prompt_as_conversation_title_in_tab_names_defaults_to_false() {
     App::test((), |mut app| async move {
         initialize_settings_for_tests(&mut app);

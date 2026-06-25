@@ -111,6 +111,37 @@ fn test_parse_rename_tab_slash_command_arguments() {
 }
 
 #[test]
+fn test_parse_rename_tab_color_slash_command_allows_bare_usage_detection() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let terminal = add_window_with_bootstrapped_terminal(
+            &mut app, None, /* history_file_commands */
+            None,
+        )
+        .await;
+        let input = terminal.read(&app, |terminal, _| terminal.input().clone());
+        let slash_command_data_source =
+            input.read(&app, |input, _| input.slash_command_data_source.clone());
+
+        slash_command_data_source.read(&app, |data_source, _| {
+            let detected_without_argument = data_source
+                .parse_slash_command(commands::RENAME_TAB_COLOR.name)
+                .expect("expected bare /rename-tab-color to parse for its usage error");
+            assert_eq!(detected_without_argument.argument, None);
+
+            let detected_with_argument = data_source
+                .parse_slash_command("/rename-tab-color blue GOAL: primary")
+                .expect("expected /rename-tab-color to parse with an argument");
+            assert_eq!(
+                detected_with_argument.argument.as_deref(),
+                Some("blue GOAL: primary")
+            );
+        });
+    });
+}
+
+#[test]
 fn test_non_ai_commands_remain_active_when_ai_is_disabled() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);

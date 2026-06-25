@@ -525,6 +525,7 @@ impl AnsiColors {
     Deserialize,
     PartialEq,
     Eq,
+    Hash,
     schemars::JsonSchema,
     settings_value::SettingsValue,
     strum_macros::Display,

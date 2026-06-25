@@ -1,9 +1,19 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
 use settings::macros::define_settings_group;
 use settings::{RespectUserSyncSetting, SupportedPlatforms, SyncToCloud};
 use warp_core::ui::theme::AnsiColorIdentifier;
+
+pub(crate) const TAB_COLOR_OPTIONS: [AnsiColorIdentifier; 6] = [
+    AnsiColorIdentifier::Red,
+    AnsiColorIdentifier::Green,
+    AnsiColorIdentifier::Yellow,
+    AnsiColorIdentifier::Blue,
+    AnsiColorIdentifier::Magenta,
+    AnsiColorIdentifier::Cyan,
+];
 
 #[derive(
     Default,
@@ -223,6 +233,304 @@ impl DirectoryTabColors {
         map.insert(canonical_directory_key(path), color);
         Self(map)
     }
+}
+
+/// A fixed tab color slot that can be assigned a user-facing label.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    serde::Serialize,
+    serde::Deserialize,
+    PartialEq,
+    Eq,
+    Hash,
+    schemars::JsonSchema,
+    settings_value::SettingsValue,
+)]
+#[serde(rename_all = "lowercase")]
+#[schemars(description = "A fixed tab color slot.")]
+pub enum TabColorSlot {
+    Default,
+    Black,
+    Red,
+    Green,
+    Yellow,
+    Blue,
+    Magenta,
+    Cyan,
+    White,
+}
+
+impl TabColorSlot {
+    pub fn raw_label(self) -> &'static str {
+        match self {
+            Self::Default => "Default",
+            Self::Black => "Black",
+            Self::Red => "Red",
+            Self::Green => "Green",
+            Self::Yellow => "Yellow",
+            Self::Blue => "Blue",
+            Self::Magenta => "Magenta",
+            Self::Cyan => "Cyan",
+            Self::White => "White",
+        }
+    }
+
+    pub fn color(self) -> Option<AnsiColorIdentifier> {
+        match self {
+            Self::Default => None,
+            Self::Black => Some(AnsiColorIdentifier::Black),
+            Self::Red => Some(AnsiColorIdentifier::Red),
+            Self::Green => Some(AnsiColorIdentifier::Green),
+            Self::Yellow => Some(AnsiColorIdentifier::Yellow),
+            Self::Blue => Some(AnsiColorIdentifier::Blue),
+            Self::Magenta => Some(AnsiColorIdentifier::Magenta),
+            Self::Cyan => Some(AnsiColorIdentifier::Cyan),
+            Self::White => Some(AnsiColorIdentifier::White),
+        }
+    }
+
+    pub fn parse(input: &str, allowed_colors: &[AnsiColorIdentifier]) -> Option<Self> {
+        let input = input.trim();
+        if input.eq_ignore_ascii_case("default") || input.eq_ignore_ascii_case("none") {
+            return Some(Self::Default);
+        }
+
+        input
+            .parse::<AnsiColorIdentifier>()
+            .ok()
+            .filter(|color| allowed_colors.contains(color))
+            .map(Self::from)
+    }
+}
+
+impl std::fmt::Display for TabColorSlot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.raw_label())
+    }
+}
+
+impl From<AnsiColorIdentifier> for TabColorSlot {
+    fn from(color: AnsiColorIdentifier) -> Self {
+        match color {
+            AnsiColorIdentifier::Black => Self::Black,
+            AnsiColorIdentifier::Red => Self::Red,
+            AnsiColorIdentifier::Green => Self::Green,
+            AnsiColorIdentifier::Yellow => Self::Yellow,
+            AnsiColorIdentifier::Blue => Self::Blue,
+            AnsiColorIdentifier::Magenta => Self::Magenta,
+            AnsiColorIdentifier::Cyan => Self::Cyan,
+            AnsiColorIdentifier::White => Self::White,
+        }
+    }
+}
+
+/// User-configured labels for the fixed tab color slots.
+#[derive(Default, Debug, Clone, PartialEq, Eq, schemars::JsonSchema)]
+#[schemars(description = "Custom display labels for tab color slots.")]
+pub struct TabColorSlotLabels(HashMap<TabColorSlot, String>);
+
+impl Serialize for TabColorSlotLabels {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.normalized().0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for TabColorSlotLabels {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Self(HashMap::deserialize(deserializer)?).normalized())
+    }
+}
+
+impl settings_value::SettingsValue for TabColorSlotLabels {
+    fn to_file_value(&self) -> serde_json::Value {
+        <HashMap<TabColorSlot, String> as settings_value::SettingsValue>::to_file_value(
+            &self.normalized().0,
+        )
+    }
+
+    fn from_file_value(value: &serde_json::Value) -> Option<Self> {
+        Some(
+            Self(
+                <HashMap<TabColorSlot, String> as settings_value::SettingsValue>::from_file_value(
+                    value,
+                )?,
+            )
+            .normalized(),
+        )
+    }
+}
+
+settings::macros::implement_setting_for_enum!(
+    TabColorSlotLabels,
+    TabSettings,
+    SupportedPlatforms::ALL,
+    SyncToCloud::Globally(RespectUserSyncSetting::Yes),
+    private: false,
+    toml_path: "appearance.tabs.color_slot_labels",
+    max_table_depth: 0,
+    description: "Custom display labels for tab color slots.",
+);
+
+impl TabColorSlotLabels {
+    pub fn custom_label_for_slot(&self, slot: TabColorSlot) -> Option<&str> {
+        self.0.get(&slot).map(String::as_str)
+    }
+
+    pub fn custom_label(&self, color: AnsiColorIdentifier) -> Option<&str> {
+        self.custom_label_for_slot(color.into())
+    }
+
+    pub fn label_for_slot(&self, slot: TabColorSlot) -> String {
+        self.custom_label_for_slot(slot)
+            .filter(|label| !label.trim().is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| slot.raw_label().to_owned())
+    }
+
+    pub fn label_for(&self, color: AnsiColorIdentifier) -> String {
+        self.label_for_slot(color.into())
+    }
+
+    pub fn display_label_for_slot(&self, slot: TabColorSlot) -> String {
+        match self
+            .custom_label_for_slot(slot)
+            .filter(|label| !label.trim().is_empty())
+        {
+            Some(label) => format!("{} ({})", label.trim(), slot.raw_label()),
+            None => slot.raw_label().to_owned(),
+        }
+    }
+
+    pub fn display_label_for(&self, color: AnsiColorIdentifier) -> String {
+        self.display_label_for_slot(color.into())
+    }
+
+    pub fn resolve_slot_label(
+        &self,
+        input: &str,
+        allowed_colors: &[AnsiColorIdentifier],
+    ) -> Option<TabColorSlot> {
+        let input = input.trim();
+        if input.is_empty() {
+            return None;
+        }
+
+        let labels = self.normalized_with_allowed_colors(allowed_colors);
+        TabColorSlot::parse(input, allowed_colors).or_else(|| {
+            tab_color_slots(allowed_colors).find(|slot| {
+                labels
+                    .custom_label_for_slot(*slot)
+                    .is_some_and(|label| label.trim().eq_ignore_ascii_case(input))
+            })
+        })
+    }
+
+    pub fn resolve_label(
+        &self,
+        input: &str,
+        allowed_colors: &[AnsiColorIdentifier],
+    ) -> Option<AnsiColorIdentifier> {
+        self.resolve_slot_label(input, allowed_colors)
+            .and_then(TabColorSlot::color)
+    }
+
+    fn is_reserved_label(label: &str) -> bool {
+        label.eq_ignore_ascii_case("default")
+            || label.eq_ignore_ascii_case("none")
+            || label.parse::<AnsiColorIdentifier>().is_ok()
+    }
+
+    pub fn normalized(&self) -> Self {
+        self.normalized_with_allowed_colors(&TAB_COLOR_OPTIONS)
+    }
+
+    fn normalized_with_allowed_colors(&self, allowed_colors: &[AnsiColorIdentifier]) -> Self {
+        let mut labels = HashMap::new();
+        for slot in tab_color_slots(allowed_colors) {
+            let Some(label) = self.0.get(&slot).map(|label| label.trim()) else {
+                continue;
+            };
+            if label.is_empty() || Self::is_reserved_label(label) {
+                continue;
+            }
+            if labels
+                .values()
+                .any(|existing_label: &String| existing_label.trim().eq_ignore_ascii_case(label))
+            {
+                continue;
+            }
+            labels.insert(slot, label.to_owned());
+        }
+        Self(labels)
+    }
+
+    pub fn with_label(
+        &self,
+        slot: impl Into<TabColorSlot>,
+        label: impl Into<String>,
+        allowed_colors: &[AnsiColorIdentifier],
+    ) -> Result<Self, TabColorSlotLabelError> {
+        let slot = slot.into();
+        if let Some(color) = slot.color() {
+            if !allowed_colors.contains(&color) {
+                return Err(TabColorSlotLabelError::UnknownColor);
+            }
+        }
+
+        let label = label.into();
+        let label = label.trim();
+        if label.is_empty() {
+            return Err(TabColorSlotLabelError::EmptyLabel);
+        }
+
+        if Self::is_reserved_label(label) {
+            return Err(TabColorSlotLabelError::ReservedLabel);
+        }
+
+        let current_labels = self.normalized_with_allowed_colors(allowed_colors);
+        if current_labels
+            .0
+            .iter()
+            .any(|(existing_slot, existing_label)| {
+                *existing_slot != slot && existing_label.trim().eq_ignore_ascii_case(label)
+            })
+        {
+            return Err(TabColorSlotLabelError::DuplicateLabel);
+        }
+
+        let mut labels = current_labels.0;
+        labels.insert(slot, label.to_owned());
+        Ok(Self(labels))
+    }
+
+    pub fn without_label(&self, slot: impl Into<TabColorSlot>) -> Self {
+        let mut labels = self.normalized().0;
+        labels.remove(&slot.into());
+        Self(labels)
+    }
+}
+
+fn tab_color_slots(
+    allowed_colors: &[AnsiColorIdentifier],
+) -> impl Iterator<Item = TabColorSlot> + '_ {
+    std::iter::once(TabColorSlot::Default)
+        .chain(allowed_colors.iter().copied().map(TabColorSlot::from))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabColorSlotLabelError {
+    UnknownColor,
+    EmptyLabel,
+    ReservedLabel,
+    DuplicateLabel,
 }
 
 /// Canonicalizes `path` into the string key used in [`DirectoryTabColors`].
@@ -556,6 +864,7 @@ define_settings_group!(TabSettings, settings: [
     workspace_decoration_visibility: WorkspaceDecorationVisibility,
     close_button_position: TabCloseButtonPosition,
     directory_tab_colors: DirectoryTabColors,
+    color_slot_labels: TabColorSlotLabels,
 ]);
 
 #[cfg(test)]

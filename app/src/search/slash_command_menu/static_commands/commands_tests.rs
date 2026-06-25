@@ -46,6 +46,28 @@ fn name_window_command_requires_argument() {
 }
 
 #[test]
+fn rename_tab_color_command_allows_bare_usage_detection() {
+    let command = COMMAND_REGISTRY
+        .get_command_with_name(RENAME_TAB_COLOR.name)
+        .expect("expected /rename-tab-color to be registered");
+    let argument = command
+        .argument
+        .as_ref()
+        .expect("expected /rename-tab-color to accept usage arguments");
+
+    assert_eq!(command.name, "/rename-tab-color");
+    assert_eq!(command.icon_path, "bundled/svg/pencil-line.svg");
+    assert_eq!(command.availability, Availability::ALWAYS);
+    assert!(!command.auto_enter_ai_mode);
+    assert!(argument.is_optional);
+    assert!(!argument.should_execute_on_selection);
+    assert_eq!(
+        argument.hint_text,
+        Some("<default|color> <label | --clear>")
+    );
+}
+
+#[test]
 fn rename_conversation_command_is_active_conversation_scoped_and_requires_argument() {
     let command = COMMAND_REGISTRY
         .get_command_with_name(RENAME_CONVERSATION.name)
@@ -117,6 +139,7 @@ fn set_tab_color_command_requires_argument() {
         let lower = color.to_string().to_ascii_lowercase();
         assert!(hint.contains(&lower), "hint should mention `{lower}`");
     }
+    assert!(hint.contains("default"), "hint should mention `default`");
     assert!(hint.contains("none"), "hint should mention `none`");
 }
 

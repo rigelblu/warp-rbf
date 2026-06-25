@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use ai::skills::SkillReference;
 pub use cloud_mode_v2_view::{CloudModeV2SlashCommandView, Section as CloudModeV2Section};
 pub use data_source::*;
+use settings::Setting;
 pub use view::{CloseReason, InlineSlashCommandView, SlashCommandsEvent};
 #[cfg(not(target_family = "wasm"))]
 use warp_cli::agent::Harness;
@@ -21,6 +22,7 @@ use warp_util::path::{CleanPathResult, LineAndColumnArg};
 use warpui::clipboard::ClipboardContent;
 use warpui::{AppContext, SingletonEntity, ViewContext};
 
+use crate::TelemetryEvent;
 #[cfg(not(target_family = "wasm"))]
 use crate::ai::agent::conversation::AIConversationId;
 #[cfg(not(target_family = "wasm"))]
@@ -30,7 +32,7 @@ use crate::ai::agent_management::telemetry::AgentManagementTelemetryEvent;
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use crate::ai::ambient_agents::telemetry::HandoffEntryPoint;
 use crate::ai::blocklist::agent_view::{
-    AgentViewEntryOrigin, DismissalStrategy, EphemeralMessage, ENTER_OR_EXIT_CONFIRMATION_WINDOW,
+    AgentViewEntryOrigin, DismissalStrategy, ENTER_OR_EXIT_CONFIRMATION_WINDOW, EphemeralMessage,
 };
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use crate::ai::blocklist::handoff::PendingCloudLaunch;
@@ -41,8 +43,8 @@ use crate::ai::blocklist::{
 use crate::ai::conversation_rename::rename_conversation;
 use crate::cloud_object::model::persistence::CloudModel;
 use crate::code_review::telemetry_event::CodeReviewPaneEntrypoint;
-use crate::search::slash_command_menu::static_commands::commands::{self, COMMAND_REGISTRY};
 use crate::search::slash_command_menu::static_commands::Availability;
+use crate::search::slash_command_menu::static_commands::commands::{self, COMMAND_REGISTRY};
 use crate::search::slash_command_menu::{SlashCommandId, StaticCommand};
 use crate::server::ids::SyncId;
 use crate::server::telemetry::SlashCommandAcceptedDetails;
@@ -64,8 +66,10 @@ use crate::terminal::view::TerminalAction;
 use crate::ui_components::color_dot;
 use crate::view_components::DismissibleToast;
 use crate::workflows::{WorkflowSelectionSource, WorkflowSource, WorkflowType};
+use crate::workspace::tab_settings::{
+    TabColorSlot, TabColorSlotLabelError, TabColorSlotLabels, TabSettings,
+};
 use crate::workspace::{ForkedConversationDestination, ToastStack, WorkspaceAction};
-use crate::TelemetryEvent;
 
 #[derive(Debug, Clone)]
 pub enum AcceptSlashCommandOrSavedPrompt {
@@ -139,6 +143,128 @@ fn parse_name_window_argument(
         Ok(NameWindowCommandArgument::Clear)
     } else {
         Ok(NameWindowCommandArgument::Set(name.to_owned()))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RenameTabColorCommandArgument {
+    Set {
+        slot: TabColorSlot,
+        label: String,
+    },
+    Clear {
+        slot: TabColorSlot,
+    },
+}
+
+fn trim_wrapping_quotes(label: &str) -> &str {
+    let label = label.trim();
+    if let Some(inner) = label
+        .strip_prefix('"')
+        .and_then(|label| label.strip_suffix('"'))
+    {
+        inner.trim()
+    } else if let Some(inner) = label
+        .strip_prefix('\'')
+        .and_then(|label| label.strip_suffix('\''))
+    {
+        inner.trim()
+    } else {
+        label
+    }
+}
+
+fn parse_rename_tab_color_argument(
+    raw: Option<&str>,
+    allowed_colors: &[AnsiColorIdentifier],
+) -> Result<RenameTabColorCommandArgument, String> {
+    let raw = raw
+        .map(str::trim)
+        .filter(|arg| !arg.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "Please provide a color and label after /rename-tab-color ({})",
+                supported_tab_color_options()
+            )
+        })?;
+    let mut parts = raw.splitn(2, char::is_whitespace);
+    let slot_arg = parts.next().unwrap_or_default();
+    let rest = parts.next().map(str::trim).unwrap_or_default();
+    let slot = TabColorSlot::parse(slot_arg, allowed_colors)
+        .ok_or_else(|| {
+            format!(
+                "Unknown tab color '{slot_arg}'. Use one of: {}.",
+                supported_tab_color_options()
+            )
+        })?;
+
+    if rest.eq_ignore_ascii_case("--clear") {
+        return Ok(RenameTabColorCommandArgument::Clear { slot });
+    }
+
+    let label = trim_wrapping_quotes(rest);
+    if label.is_empty() {
+        return Err(format!(
+            "Please provide a label for {slot} or use /rename-tab-color {} --clear",
+            slot.raw_label().to_ascii_lowercase()
+        ));
+    }
+
+    Ok(RenameTabColorCommandArgument::Set {
+        slot,
+        label: label.to_owned(),
+    })
+}
+
+fn supported_tab_color_options() -> String {
+    std::iter::once("default".to_owned())
+        .chain(
+            color_dot::TAB_COLOR_OPTIONS
+                .iter()
+                .map(|c| c.to_string().to_ascii_lowercase()),
+        )
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn supported_set_tab_color_options(labels: &TabColorSlotLabels) -> String {
+    std::iter::once(labels.label_for_slot(TabColorSlot::Default))
+        .chain(
+            color_dot::TAB_COLOR_OPTIONS
+                .iter()
+                .map(|color| labels.label_for(*color)),
+        )
+        .chain(std::iter::once("none".to_owned()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn parse_set_tab_color_argument(
+    raw: Option<&str>,
+    labels: &TabColorSlotLabels,
+) -> Result<SelectedTabColor, String> {
+    let arg = raw
+        .map(str::trim)
+        .filter(|arg| !arg.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "Please provide a color after /set-tab-color ({})",
+                supported_set_tab_color_options(labels)
+            )
+        })?;
+
+    match labels.resolve_slot_label(arg, &color_dot::TAB_COLOR_OPTIONS) {
+        Some(TabColorSlot::Default) => Ok(SelectedTabColor::Cleared),
+        Some(slot) => slot.color().map(SelectedTabColor::Color).ok_or_else(|| {
+            format!(
+                "Unknown tab color '{arg}'. Use one of: {}.",
+                supported_set_tab_color_options(labels)
+            )
+        }),
+        None => Err(format!(
+            "Unknown tab color '{arg}'. Use one of: {}.",
+            supported_set_tab_color_options(labels)
+        )),
     }
 }
 
@@ -539,6 +665,94 @@ impl Input {
                     }
                 }
             }
+            _ if command.name == commands::RENAME_TAB_COLOR.name => {
+                match parse_rename_tab_color_argument(
+                    argument.map(String::as_str),
+                    &color_dot::TAB_COLOR_OPTIONS,
+                ) {
+                    Ok(RenameTabColorCommandArgument::Set { slot, label }) => {
+                        let settings = TabSettings::handle(ctx);
+                        let current_labels = settings.as_ref(ctx).color_slot_labels.value().clone();
+                        match current_labels.with_label(
+                            slot,
+                            label.as_str(),
+                            &color_dot::TAB_COLOR_OPTIONS,
+                        ) {
+                            Ok(new_labels) => {
+                                if let Err(err) = settings.update(ctx, |settings, ctx| {
+                                    settings.color_slot_labels.set_value(new_labels, ctx)
+                                }) {
+                                    show_error_toast(
+                                        format!("Unable to rename tab color: {err}"),
+                                        ctx,
+                                    );
+                                    return true;
+                                }
+                            }
+                            Err(TabColorSlotLabelError::UnknownColor) => {
+                                show_error_toast(
+                                    format!(
+                                        "Unknown tab color '{slot}'. Use one of: {}.",
+                                        supported_tab_color_options()
+                                    ),
+                                    ctx,
+                                );
+                                return true;
+                            }
+                            Err(TabColorSlotLabelError::EmptyLabel) => {
+                                show_error_toast(
+                                    "Please provide a non-empty tab color label".to_owned(),
+                                    ctx,
+                                );
+                                return true;
+                            }
+                            Err(TabColorSlotLabelError::ReservedLabel) => {
+                                show_error_toast(
+                                    format!(
+                                        "'{}' is reserved. Use a label that is not one of: {}.",
+                                        label.trim(),
+                                        supported_set_tab_color_options(&current_labels)
+                                    ),
+                                    ctx,
+                                );
+                                return true;
+                            }
+                            Err(TabColorSlotLabelError::DuplicateLabel) => {
+                                show_error_toast(
+                                    format!(
+                                        "A tab color slot is already named '{}'. Use a unique label.",
+                                        label.trim()
+                                    ),
+                                    ctx,
+                                );
+                                return true;
+                            }
+                        }
+                    }
+                    Ok(RenameTabColorCommandArgument::Clear { slot }) => {
+                        let settings = TabSettings::handle(ctx);
+                        let new_labels = settings
+                            .as_ref(ctx)
+                            .color_slot_labels
+                            .value()
+                            .clone()
+                            .without_label(slot);
+                        if let Err(err) = settings.update(ctx, |settings, ctx| {
+                            settings.color_slot_labels.set_value(new_labels, ctx)
+                        }) {
+                            show_error_toast(
+                                format!("Unable to clear tab color label: {err}"),
+                                ctx,
+                            );
+                            return true;
+                        }
+                    }
+                    Err(message) => {
+                        show_error_toast(message, ctx);
+                        return true;
+                    }
+                }
+            }
             _ if command.name == commands::RENAME_CONVERSATION.name => {
                 let Some(conversation_id) = self
                     .ai_context_model
@@ -554,48 +768,13 @@ impl Input {
                 rename_conversation(conversation_id, argument.cloned().unwrap_or_default(), ctx);
             }
             set_tab_color if command.name == commands::SET_TAB_COLOR.name => {
-                let supported_options = || {
-                    color_dot::TAB_COLOR_OPTIONS
-                        .iter()
-                        .map(|c| c.to_string().to_ascii_lowercase())
-                        .chain(std::iter::once("none".to_owned()))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                };
-
-                let Some(arg) = argument
-                    .map(|name| name.trim())
-                    .filter(|name| !name.is_empty())
-                else {
-                    show_error_toast(
-                        format!(
-                            "Please provide a color after /set-tab-color ({})",
-                            supported_options()
-                        ),
-                        ctx,
-                    );
-                    return true;
-                };
-
-                let color = if arg.eq_ignore_ascii_case("none") {
-                    SelectedTabColor::Cleared
-                } else {
-                    let parsed = arg
-                        .parse::<AnsiColorIdentifier>()
-                        .ok()
-                        .filter(|c| color_dot::TAB_COLOR_OPTIONS.contains(c));
-                    match parsed {
-                        Some(c) => SelectedTabColor::Color(c),
-                        None => {
-                            show_error_toast(
-                                format!(
-                                    "Unknown tab color '{arg}'. Use one of: {}.",
-                                    supported_options()
-                                ),
-                                ctx,
-                            );
-                            return true;
-                        }
+                let labels = TabSettings::as_ref(ctx).color_slot_labels.value();
+                let color = match parse_set_tab_color_argument(argument.map(String::as_str), labels)
+                {
+                    Ok(color) => color,
+                    Err(message) => {
+                        show_error_toast(message, ctx);
+                        return true;
                     }
                 };
 
@@ -907,7 +1086,9 @@ impl Input {
                     .map(|path| path.to_path_buf())
                     .map(|path| path.to_string_lossy().to_string())
                 else {
-                    log::error!("Expected a valid working directory since /pr-comments is only available from the terminal");
+                    log::error!(
+                        "Expected a valid working directory since /pr-comments is only available from the terminal"
+                    );
                     return false;
                 };
 

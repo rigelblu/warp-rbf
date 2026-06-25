@@ -10,8 +10,7 @@ use warp_core::context_flag::ContextFlag;
 use warp_core::ui::builder::UiBuilder;
 use warp_core::ui::color::contrast::relative_luminance;
 use warp_core::ui::theme::color::internal_colors;
-use warp_core::ui::theme::AnsiColors;
-use warp_core::ui::theme::WarpTheme;
+use warp_core::ui::theme::{AnsiColors, WarpTheme};
 use warpui::elements::{
     Align, Border, ChildAnchor, Clipped, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, DragAxis, Draggable, DraggableState, DropTarget, Element, Empty, Fill,
@@ -48,7 +47,7 @@ use crate::util::truncation::truncate_from_end;
 use crate::workspace::sync_inputs::SyncedInputState;
 use crate::workspace::tab_group::{TabGroup, TabGroupId};
 use crate::workspace::tab_settings::{
-    TabCloseButtonPosition, TabSettings, VerticalTabsDisplayGranularity,
+    TabCloseButtonPosition, TabColorSlot, TabSettings, VerticalTabsDisplayGranularity,
 };
 use crate::workspace::{
     PaneViewLocator, TabBarDropTargetData, TabBarLocation, TabContextMenuAnchor, WorkspaceAction,
@@ -279,7 +278,7 @@ impl TabData {
             self.modify_tab_menu_items(index, can_move_left, can_move_right, pane_name_target, ctx),
             self.close_tab_menu_items(index, tabs_len, ctx),
             Self::save_config_menu_items(index),
-            self.color_option_menu_items(index, terminal_colors),
+            self.color_option_menu_items(index, terminal_colors, ctx),
         ] {
             if menu_items
                 .last()
@@ -663,79 +662,13 @@ impl TabData {
         &self,
         index: usize,
         terminal_colors: AnsiColors,
+        ctx: &AppContext,
     ) -> Vec<MenuItem<WorkspaceAction>> {
         if FeatureFlag::DirectoryTabColors.is_enabled() {
             self.dot_color_option_menu_items(index, terminal_colors)
         } else {
-            self.legacy_color_option_menu_items(index, terminal_colors)
+            self.legacy_color_option_menu_items(index, terminal_colors, ctx)
         }
-    }
-
-    /// Spike (#warp-33): nearest named color for a resolved swatch color, so we
-    /// can dogfood whether name-by-appearance beats the ANSI slot name. Redmean
-    /// RGB distance over an embedded CSS-ish palette. Abandon if names look off.
-    #[rustfmt::skip]
-    const NAMED_COLORS: &'static [(&'static str, (u8, u8, u8))] = &[
-        ("Black", (0, 0, 0)), ("White", (255, 255, 255)),
-        ("Red", (255, 0, 0)), ("Crimson", (220, 20, 60)), ("FireBrick", (178, 34, 34)),
-        ("DarkRed", (139, 0, 0)), ("Maroon", (128, 0, 0)), ("IndianRed", (205, 92, 92)),
-        ("Salmon", (250, 128, 114)), ("LightSalmon", (255, 160, 122)), ("Tomato", (255, 99, 71)),
-        ("Coral", (255, 127, 80)), ("OrangeRed", (255, 69, 0)), ("Orange", (255, 165, 0)),
-        ("DarkOrange", (255, 140, 0)), ("Gold", (255, 215, 0)), ("Yellow", (255, 255, 0)),
-        ("Khaki", (240, 230, 140)), ("Goldenrod", (218, 165, 32)), ("DarkGoldenrod", (184, 134, 11)),
-        ("Olive", (128, 128, 0)), ("OliveDrab", (107, 142, 35)), ("YellowGreen", (154, 205, 50)),
-        ("Chartreuse", (127, 255, 0)), ("Lime", (0, 255, 0)), ("LimeGreen", (50, 205, 50)),
-        ("LightGreen", (144, 238, 144)), ("Green", (0, 128, 0)), ("ForestGreen", (34, 139, 34)),
-        ("DarkGreen", (0, 100, 0)), ("SeaGreen", (46, 139, 87)), ("MediumSeaGreen", (60, 179, 113)),
-        ("SpringGreen", (0, 255, 127)), ("Teal", (0, 128, 128)), ("DarkCyan", (0, 139, 139)),
-        ("LightSeaGreen", (32, 178, 170)), ("Turquoise", (64, 224, 208)), ("Aquamarine", (127, 255, 212)),
-        ("Cyan", (0, 255, 255)), ("PaleTurquoise", (175, 238, 238)), ("CadetBlue", (95, 158, 160)),
-        ("SteelBlue", (70, 130, 180)), ("LightBlue", (173, 216, 230)), ("SkyBlue", (135, 206, 235)),
-        ("DeepSkyBlue", (0, 191, 255)), ("DodgerBlue", (30, 144, 255)), ("CornflowerBlue", (100, 149, 237)),
-        ("RoyalBlue", (65, 105, 225)), ("Blue", (0, 0, 255)), ("MediumBlue", (0, 0, 205)),
-        ("Navy", (0, 0, 128)), ("MidnightBlue", (25, 25, 112)), ("SlateBlue", (106, 90, 205)),
-        ("DarkSlateBlue", (72, 61, 139)), ("Indigo", (75, 0, 130)), ("BlueViolet", (138, 43, 226)),
-        ("DarkViolet", (148, 0, 211)), ("MediumPurple", (147, 112, 219)), ("Purple", (128, 0, 128)),
-        ("DarkMagenta", (139, 0, 139)), ("Magenta", (255, 0, 255)), ("Orchid", (218, 112, 214)),
-        ("MediumOrchid", (186, 85, 211)), ("Violet", (238, 130, 238)), ("Plum", (221, 160, 221)),
-        ("Thistle", (216, 191, 216)), ("Lavender", (230, 230, 250)), ("HotPink", (255, 105, 180)),
-        ("DeepPink", (255, 20, 147)), ("Pink", (255, 192, 203)), ("LightPink", (255, 182, 193)),
-        ("PaleVioletRed", (219, 112, 147)), ("MistyRose", (255, 228, 225)), ("Brown", (165, 42, 42)),
-        ("Sienna", (160, 82, 45)), ("SaddleBrown", (139, 69, 19)), ("Chocolate", (210, 105, 30)),
-        ("Peru", (205, 133, 63)), ("SandyBrown", (244, 164, 96)), ("Tan", (210, 180, 140)),
-        ("RosyBrown", (188, 143, 143)), ("Wheat", (245, 222, 179)), ("Beige", (245, 245, 220)),
-        ("Gray", (128, 128, 128)), ("DimGray", (105, 105, 105)), ("DarkGray", (169, 169, 169)),
-        ("Silver", (192, 192, 192)), ("LightGray", (211, 211, 211)), ("Gainsboro", (220, 220, 220)),
-        ("SlateGray", (112, 128, 144)), ("LightSlateGray", (119, 136, 153)), ("DarkSlateGray", (47, 79, 79)),
-    ];
-
-    fn nearest_color_name(c: ColorU) -> &'static str {
-        let (r, g, b) = (c.r as i64, c.g as i64, c.b as i64);
-        Self::NAMED_COLORS
-            .iter()
-            .min_by_key(|(_, (nr, ng, nb))| {
-                let (nr, ng, nb) = (*nr as i64, *ng as i64, *nb as i64);
-                let rmean = (r + nr) / 2;
-                let (dr, dg, db) = (r - nr, g - ng, b - nb);
-                // Redmean weighted-RGB distance (×256, integer), a cheap perceptual approximation.
-                (512 + rmean) * dr * dr + 1024 * dg * dg + (767 - rmean) * db * db
-            })
-            .map(|(name, _)| *name)
-            .unwrap_or("Color")
-    }
-
-    /// Spike (#warp-33): "CadetBlue" -> "Cadet Blue" for the swatch tooltip.
-    fn spaced_name(name: &str) -> String {
-        let mut out = String::with_capacity(name.len() + 2);
-        let mut prev_lower = false;
-        for ch in name.chars() {
-            if ch.is_uppercase() && prev_lower {
-                out.push(' ');
-            }
-            out.push(ch);
-            prev_lower = ch.is_lowercase();
-        }
-        out
     }
 
     /// New dot-based color picker: default (no-color) + color options.
@@ -752,7 +685,7 @@ impl TabData {
 
         vec![MenuItem::Item(
             MenuItemFields::new_with_custom_label(
-                Arc::new(move |_is_selected, _is_hovered, appearance, _app| {
+                Arc::new(move |_is_selected, _is_hovered, appearance, app| {
                     let theme = appearance.theme();
                     let ring_color: ColorU = theme.accent().into();
 
@@ -773,10 +706,10 @@ impl TabData {
                             None => ColorU::transparent_black(),
                             Some(id) => id.to_ansi_color(&terminal_colors).into(),
                         };
+                        let color_slot_labels = TabSettings::as_ref(app).color_slot_labels.value();
                         let tooltip = match ansi_id {
-                            None => "Default (no color)".to_string(),
-                            // Spike (#warp-33): name by nearest appearance, not ANSI slot.
-                            Some(_) => Self::spaced_name(Self::nearest_color_name(dot_color)),
+                            None => color_slot_labels.display_label_for_slot(TabColorSlot::Default),
+                            Some(id) => color_slot_labels.display_label_for(id),
                         };
 
                         let dot = render_color_dot(
@@ -821,7 +754,9 @@ impl TabData {
         &self,
         index: usize,
         terminal_colors: AnsiColors,
+        ctx: &AppContext,
     ) -> Vec<MenuItem<WorkspaceAction>> {
+        let color_slot_labels = TabSettings::as_ref(ctx).color_slot_labels.value();
         vec![MenuItem::ItemsRow {
             items: TAB_COLOR_OPTIONS
                 .iter()
@@ -834,7 +769,7 @@ impl TabData {
                             TAB_COLOR_ICON_PATH
                         },
                         color.into(),
-                        color_option.to_string(),
+                        color_slot_labels.display_label_for(*color_option),
                     )
                     .no_highlight_on_hover()
                     .with_on_select_action(WorkspaceAction::ToggleTabColor {
