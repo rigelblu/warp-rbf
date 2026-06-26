@@ -44,6 +44,9 @@ This is my ~~fork~~ flavour of [Warp](https://github.com/warpdotdev/Warp), simil
   - `/rename-tab-color <color> <label>`
   - `/rename-tab-color <color> --clear`
 
+**See Warp and RBF version numbers** (macOS)
+— Know exactly which Warp build and RBF feature set is running before trusting a dogfood result. Settings -> About renders separate rows for Warp and Warp RBF with copy buttons.
+
 ## 🟠⋯ Settings, Themes, And Data
 Copy your regular warp configs
 ```

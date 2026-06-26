@@ -976,7 +976,7 @@ impl VersionInfoWidget {
                                     .with_cursor(Cursor::PointingHand)
                                     .on_click(move |ctx, _, _| {
                                         ctx.dispatch_typed_action(WorkspaceAction::CopyVersion(
-                                            version,
+                                            version.to_string(),
                                         ));
                                     })
                                     .finish(),

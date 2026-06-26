@@ -281,7 +281,7 @@ pub enum WorkspaceAction {
     AutoupdateFailureLink,
     ApplyUpdate,
     LogOut,
-    CopyVersion(&'static str),
+    CopyVersion(String),
     DownloadNewVersion,
     ConfigureKeybindingSettings {
         keybinding_name: Option<String>,

@@ -6,6 +6,12 @@ title: Changelog
 
 ---
 
+# 🔵⋯ v0.8.0 (2026-06-30)
+## 🟠⋯ Added
+- 2026-06-29 - feat (user need) | know exactly which Warp build and RBF feature set is running before trusting a dogfood result (#warp-47)
+
+---
+
 # 🔵⋯ v0.7.0 (2026-06-23)
 ## 🟠⋯ Added
 - name a window from Warp's command surface | use `/name-window <name>` to give the current window a persistent name that shows in macOS window surfaces and survives restart; `/name-window --clear` returns to the active-tab title (#warp-06)
