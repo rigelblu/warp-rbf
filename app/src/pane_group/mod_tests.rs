@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use ai::index::full_source_code_embedding::manager::CodebaseIndexManager;
 use ai::project_context::model::ProjectContextModel;
@@ -654,6 +656,83 @@ impl pane::PaneContent for PreAttachReturnsFalsePane {
         _detach_type: pane::DetachType,
         _ctx: &mut ViewContext<PaneGroup>,
     ) {
+    }
+
+    fn snapshot(&self, _app: &AppContext) -> LeafContents {
+        LeafContents::GetStarted
+    }
+
+    fn has_application_focus(&self, _ctx: &mut ViewContext<PaneGroup>) -> bool {
+        false
+    }
+
+    fn focus(&self, _ctx: &mut ViewContext<PaneGroup>) {}
+
+    fn shareable_link(
+        &self,
+        _ctx: &mut ViewContext<PaneGroup>,
+    ) -> Result<pane::ShareableLink, pane::ShareableLinkError> {
+        Ok(pane::ShareableLink::Base)
+    }
+
+    fn pane_configuration(&self) -> ModelHandle<PaneConfiguration> {
+        self.pane_configuration.clone()
+    }
+
+    fn is_pane_being_dragged(&self, _ctx: &AppContext) -> bool {
+        false
+    }
+}
+
+#[derive(Default)]
+struct PaneLifecycleProbe {
+    pre_attach_count: usize,
+    attach_count: usize,
+    detach_types: Vec<pane::DetachType>,
+}
+
+struct MoveAttachProbePane {
+    pane_id: PaneId,
+    pane_configuration: ModelHandle<PaneConfiguration>,
+    lifecycle: Rc<RefCell<PaneLifecycleProbe>>,
+}
+
+impl MoveAttachProbePane {
+    fn new(lifecycle: Rc<RefCell<PaneLifecycleProbe>>, ctx: &mut ViewContext<PaneGroup>) -> Self {
+        Self {
+            pane_id: PaneId::dummy_pane_id(),
+            pane_configuration: ctx.add_model(|_ctx| PaneConfiguration::new("")),
+            lifecycle,
+        }
+    }
+}
+
+impl pane::PaneContent for MoveAttachProbePane {
+    fn id(&self) -> PaneId {
+        self.pane_id
+    }
+
+    fn pre_attach(&self, _group: &PaneGroup, _ctx: &mut ViewContext<PaneGroup>) -> bool {
+        self.lifecycle.borrow_mut().pre_attach_count += 1;
+        false
+    }
+
+    fn attach(
+        &self,
+        _group: &PaneGroup,
+        _focus_handle: focus_state::PaneFocusHandle,
+        _ctx: &mut ViewContext<PaneGroup>,
+    ) {
+        self.lifecycle.borrow_mut().attach_count += 1;
+    }
+
+    fn detach(
+        &self,
+        _group: &PaneGroup,
+        detach_type: pane::DetachType,
+        _ctx: &mut ViewContext<PaneGroup>,
+    ) {
+        self.lifecycle.borrow_mut().detach_types.push(detach_type);
     }
 
     fn snapshot(&self, _app: &AppContext) -> LeafContents {
@@ -2125,6 +2204,49 @@ fn test_add_pane_aborts_cleanly_when_pre_attach_returns_false() {
 
             assert_eq!(panes.pane_count(), before_count);
             assert_eq!(panes.snapshot(ctx), before_snapshot);
+        });
+    });
+}
+
+#[test]
+fn test_move_existing_editor_tab_attach_bypasses_pre_attach_and_preserves_on_split_failure() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let pane_group = mock_pane_group(&mut app, Default::default());
+
+        pane_group.update(&mut app, |panes, ctx| {
+            let lifecycle = Rc::new(RefCell::new(PaneLifecycleProbe::default()));
+            let pane = MoveAttachProbePane::new(lifecycle.clone(), ctx);
+            let pane_id = pane.id();
+
+            let result = panes.try_add_pane_with_options(
+                Box::new(pane),
+                AddPaneOptions {
+                    direction: Direction::Right,
+                    base_pane_id: Some(PaneId::dummy_pane_id()),
+                    focus_new_pane: true,
+                    visibility: NewPaneVisibility::Visible,
+                    emit_app_state_changed: false,
+                    attach_mode: PaneAttachMode::MoveExistingEditorTab,
+                },
+                ctx,
+            );
+
+            assert!(result.is_err());
+            assert!(!panes.has_pane_id(pane_id));
+            let lifecycle = lifecycle.borrow();
+            assert_eq!(
+                lifecycle.pre_attach_count, 0,
+                "move attach must bypass pre_attach entirely"
+            );
+            assert_eq!(
+                lifecycle.attach_count, 1,
+                "move attach still wires the pane before tree insertion"
+            );
+            assert!(
+                matches!(lifecycle.detach_types.as_slice(), [pane::DetachType::Moved]),
+                "split failure for move attach must preserve moved tab state"
+            );
         });
     });
 }

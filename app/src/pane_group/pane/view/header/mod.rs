@@ -59,8 +59,10 @@ pub enum Event<A: ActionPayload, B: ActionPayload> {
     Close,
     /// This header has been dragged over the pane with target_id at the location
     MovePaneWithinPaneGroup {
+        origin: ActionOrigin,
         target_id: PaneId,
         direction: Direction,
+        group_editors: bool,
     },
     /// A pane or file tab was dragged over the workspace tab bar.
     DraggedOverTabBar {
@@ -70,15 +72,23 @@ pub enum Event<A: ActionPayload, B: ActionPayload> {
     },
     /// The pane header was dragged over some part of the terminal that is not the pane group
     /// or tab bar
-    PaneDraggedOutsideTabBarOrPaneGroup,
-    /// This header was dropped, signaling the end of the move
-    PaneDroppedWithinPaneGroup,
+    PaneDraggedOutsideTabBarOrPaneGroup {
+        origin: ActionOrigin,
+    },
+    /// A pane or file tab was dropped over another pane in the pane group.
+    DroppedWithinPaneGroup {
+        origin: ActionOrigin,
+        target_id: PaneId,
+        group_editors: bool,
+    },
     /// A pane or file tab was dropped on the workspace tab bar.
     DroppedOnTabBar {
         origin: ActionOrigin,
     },
     // This header was dropped on a place outside of the pane group or tab bar
-    PaneDroppedOutsideofTabBarOrPaneGroup,
+    PaneDroppedOutsideofTabBarOrPaneGroup {
+        origin: ActionOrigin,
+    },
     // This header was clicked and the pane should be focused
     PaneHeaderClicked,
     /// This header's overflow menu was toggled,
@@ -100,6 +110,7 @@ pub enum PaneHeaderAction<A: ActionPayload, B: ActionPayload> {
         origin: ActionOrigin,
         drag_location: PaneDragDropLocation,
         drag_position: RectF,
+        group_editors: bool,
         /// Precomputed by drop targets that already know the exact hover state,
         /// such as vertical tabs. When absent, the hover index is derived from
         /// the drag geometry and tab bar location.
@@ -108,6 +119,7 @@ pub enum PaneHeaderAction<A: ActionPayload, B: ActionPayload> {
     PaneHeaderDropped {
         origin: ActionOrigin,
         drop_location: PaneDragDropLocation, // Represents what kind of drop target the pane was dropped over
+        group_editors: bool,
     },
     PaneHeaderClicked,
 }
@@ -890,6 +902,7 @@ impl<P: BackingView> TypedActionView for PaneHeader<P> {
                 origin,
                 drag_location,
                 drag_position,
+                group_editors,
                 precomputed_tab_hover_index,
             } => match drag_location {
                 PaneDragDropLocation::TabBar(tab_bar_location) => {
@@ -919,8 +932,10 @@ impl<P: BackingView> TypedActionView for PaneHeader<P> {
                             calculate_pane_move_direction(target_pane, *drag_position)
                         {
                             ctx.emit(Event::MovePaneWithinPaneGroup {
+                                origin: *origin,
                                 target_id: *target_id,
                                 direction,
+                                group_editors: *group_editors,
                             });
                         }
                     } else {
@@ -931,23 +946,28 @@ impl<P: BackingView> TypedActionView for PaneHeader<P> {
                 }
                 PaneDragDropLocation::Other => {
                     self.is_visible_in_pane_group = true;
-                    ctx.emit(Event::PaneDraggedOutsideTabBarOrPaneGroup)
+                    ctx.emit(Event::PaneDraggedOutsideTabBarOrPaneGroup { origin: *origin })
                 }
             },
             PaneHeaderAction::PaneHeaderDropped {
                 origin,
                 drop_location,
+                group_editors,
             } => {
                 match drop_location {
                     PaneDragDropLocation::TabBar(_) => {
                         self.is_visible_in_pane_group = true;
                         ctx.emit(Event::DroppedOnTabBar { origin: *origin })
                     }
-                    PaneDragDropLocation::PaneGroup(_) => {
-                        ctx.emit(Event::PaneDroppedWithinPaneGroup)
+                    PaneDragDropLocation::PaneGroup(target_id) => {
+                        ctx.emit(Event::DroppedWithinPaneGroup {
+                            origin: *origin,
+                            target_id: *target_id,
+                            group_editors: *group_editors,
+                        })
                     }
                     PaneDragDropLocation::Other => {
-                        ctx.emit(Event::PaneDroppedOutsideofTabBarOrPaneGroup)
+                        ctx.emit(Event::PaneDroppedOutsideofTabBarOrPaneGroup { origin: *origin })
                     }
                 }
                 send_telemetry_from_ctx!(
@@ -1025,7 +1045,7 @@ pub fn render_pane_header_draggable<P: BackingView>(
                 P::CustomAction,
             >::PaneHeaderDragStarted);
         })
-        .on_drag(move |ctx, _, drag_position, data| {
+        .on_drag_with_modifiers(move |ctx, _, drag_position, data, modifiers| {
             if let Some(pane_drop_data) =
                 data.and_then(|data| data.as_any().downcast_ref::<PaneDropTargetData>())
             {
@@ -1036,6 +1056,7 @@ pub fn render_pane_header_draggable<P: BackingView>(
                     origin: ActionOrigin::Pane,
                     drag_location: PaneDragDropLocation::PaneGroup(pane_drop_data.id),
                     drag_position,
+                    group_editors: modifiers.shift,
                     precomputed_tab_hover_index: None,
                 });
             } else if let Some(data) =
@@ -1048,6 +1069,7 @@ pub fn render_pane_header_draggable<P: BackingView>(
                     origin: ActionOrigin::Pane,
                     drag_location: PaneDragDropLocation::TabBar(data.tab_bar_location),
                     drag_position,
+                    group_editors: false,
                     precomputed_tab_hover_index: None,
                 })
             } else if let Some(data) = data.and_then(|data| {
@@ -1061,6 +1083,7 @@ pub fn render_pane_header_draggable<P: BackingView>(
                     origin: ActionOrigin::Pane,
                     drag_location: PaneDragDropLocation::TabBar(data.tab_bar_location),
                     drag_position,
+                    group_editors: false,
                     precomputed_tab_hover_index: Some(data.tab_hover_index),
                 })
             } else {
@@ -1071,11 +1094,12 @@ pub fn render_pane_header_draggable<P: BackingView>(
                     origin: ActionOrigin::Pane,
                     drag_location: PaneDragDropLocation::Other,
                     drag_position,
+                    group_editors: false,
                     precomputed_tab_hover_index: None,
                 })
             }
         })
-        .on_drop(move |ctx, _, _, data| {
+        .on_drop_with_modifiers(move |ctx, _, _, data, modifiers| {
             if let Some(data) =
                 data.and_then(|data| data.as_any().downcast_ref::<TabBarDropTargetData>())
             {
@@ -1085,6 +1109,7 @@ pub fn render_pane_header_draggable<P: BackingView>(
                 >::PaneHeaderDropped {
                     origin: ActionOrigin::Pane,
                     drop_location: PaneDragDropLocation::TabBar(data.tab_bar_location),
+                    group_editors: false,
                 })
             } else if let Some(data) = data.and_then(|data| {
                 data.as_any()
@@ -1096,6 +1121,7 @@ pub fn render_pane_header_draggable<P: BackingView>(
                 >::PaneHeaderDropped {
                     origin: ActionOrigin::Pane,
                     drop_location: PaneDragDropLocation::TabBar(data.tab_bar_location),
+                    group_editors: false,
                 })
             } else if let Some(data) =
                 data.and_then(|data| data.as_any().downcast_ref::<PaneDropTargetData>())
@@ -1106,6 +1132,7 @@ pub fn render_pane_header_draggable<P: BackingView>(
                 >::PaneHeaderDropped {
                     origin: ActionOrigin::Pane,
                     drop_location: PaneDragDropLocation::PaneGroup(data.id),
+                    group_editors: modifiers.shift,
                 })
             } else {
                 ctx.dispatch_typed_action(PaneHeaderAction::<
@@ -1114,6 +1141,7 @@ pub fn render_pane_header_draggable<P: BackingView>(
                 >::PaneHeaderDropped {
                     origin: ActionOrigin::Pane,
                     drop_location: PaneDragDropLocation::Other,
+                    group_editors: false,
                 })
             }
         })

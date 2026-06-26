@@ -16316,20 +16316,26 @@ impl Workspace {
                         TabBarHoverIndex::BeforeTab(workspace_tab_index) => {
                             // If an editor tab is dropped into a new position in the workspace tab group,
                             // create a new pane and insert it into the group.
-                            let pane = if let ActionOrigin::EditorTab(editor_tab_index) = origin {
-                                pane_group.update(ctx, |pane_group, ctx| {
-                                    pane_group.remove_editor_tab_for_move(
-                                        *pane_id,
-                                        *editor_tab_index,
-                                        ctx,
-                                    )
-                                })
-                            } else {
-                                // Otherwise, move the existing pane's contents into the workspace tab group.
-                                pane_group.update(ctx, |pane_group, ctx| {
-                                    pane_group.remove_pane_for_move(pane_id, ctx)
-                                })
-                            };
+                            let pane: Option<Box<dyn AnyPaneContent>> =
+                                if let ActionOrigin::EditorTab(editor_tab_index) = origin {
+                                    pane_group.update(ctx, |pane_group, ctx| {
+                                        pane_group
+                                            .remove_editor_tab_for_move(
+                                                *pane_id,
+                                                *editor_tab_index,
+                                                ctx,
+                                            )
+                                            .map(|editor_tab_move| {
+                                                Box::new(editor_tab_move.into_pane())
+                                                    as Box<dyn AnyPaneContent>
+                                            })
+                                    })
+                                } else {
+                                    // Otherwise, move the existing pane's contents into the workspace tab group.
+                                    pane_group.update(ctx, |pane_group, ctx| {
+                                        pane_group.remove_pane_for_move(pane_id, ctx)
+                                    })
+                                };
 
                             if let Some(pane) = pane {
                                 // TODO(johnturcoo) inherit the tab group on pane drop.
@@ -16444,7 +16450,7 @@ impl Workspace {
                                                         |pane_group, ctx| {
                                                             pane_group.add_pane_with_direction(
                                                                 Direction::Right,
-                                                                new_pane,
+                                                                new_pane.into_pane(),
                                                                 true, /* focus_new_pane */
                                                                 ctx,
                                                             );

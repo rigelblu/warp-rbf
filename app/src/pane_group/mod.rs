@@ -79,9 +79,10 @@ use crate::channel::{Channel, ChannelState};
 use crate::cloud_object::Space;
 use crate::code::active_file::ActiveFileModel;
 use crate::code::buffer_location::LocalOrRemotePath;
+use crate::code::editor_management::CodeManager;
 #[cfg(feature = "local_fs")]
 use crate::code::editor_management::CodeSource;
-use crate::code::view::{CodeView, CodeViewAction};
+use crate::code::view::{CodeView, CodeViewAction, EditorTabMove};
 use crate::code_review::comments::{AttachedReviewComment, PendingImportedReviewComment};
 use crate::code_review::diff_state::DiffMode;
 use crate::drive::items::WarpDriveItemId;
@@ -886,6 +887,12 @@ enum NewPaneVisibility {
     HiddenForMove,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PaneAttachMode {
+    Normal,
+    MoveExistingEditorTab,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct AddPaneOptions {
     direction: Direction,
@@ -893,6 +900,7 @@ struct AddPaneOptions {
     focus_new_pane: bool,
     visibility: NewPaneVisibility,
     emit_app_state_changed: bool,
+    attach_mode: PaneAttachMode,
 }
 
 impl NewTerminalOptions {
@@ -950,6 +958,7 @@ pub struct PaneGroup {
     pane_history: Vec<PaneId>,
     /// Mapping from pane IDs to their contents.
     pane_contents: HashMap<PaneId, Box<dyn AnyPaneContent>>,
+    code_pane_drag_group_target: Option<CodePaneDragGroupTarget>,
 
     server_api: Arc<ServerApi>,
 
@@ -1025,6 +1034,35 @@ pub struct PaneGroup {
     /// Tab-level custom title set via the rename-tab flow.
     custom_title: Option<String>,
 }
+
+#[derive(Clone, Copy)]
+struct CodePaneDragGroupTarget {
+    source_pane_id: PaneId,
+    target_pane_id: PaneId,
+}
+
+/// warp-44: shared, transient drag state — the pane an in-flight editor-tab drag would split a new
+/// sibling pane next to, if released now. `PaneGroup` writes it (it knows the target id from the
+/// drag event); each `PaneView` subscribes to it and reads it in render to self-identify and draw
+/// the drop-target accent. It's a singleton because `PaneView<P>` is generic and stored
+/// type-erased, so `PaneGroup` can't reach a specific target pane to flip a flag on it directly.
+#[derive(Default)]
+pub struct EditorTabSplitHintModel {
+    target_pane: Option<PaneId>,
+}
+
+impl EditorTabSplitHintModel {
+    /// The pane that should currently show the "release to split here" accent, if any.
+    pub fn target_pane(&self) -> Option<PaneId> {
+        self.target_pane
+    }
+}
+
+impl Entity for EditorTabSplitHintModel {
+    type Event = ();
+}
+
+impl SingletonEntity for EditorTabSplitHintModel {}
 
 /// Origin metadata for a split-off child agent tab; used to re-adopt the
 /// pane back to its source on tab close.
@@ -1272,13 +1310,39 @@ impl PaneGroup {
         if self.pane_contents.contains_key(&pane_id) {
             match event {
                 PaneViewEvent::MovePaneWithinPaneGroup {
+                    origin,
                     target_id,
                     direction,
+                    group_editors,
                 } => {
                     ctx.emit(Event::ClearHoveredTabIndex);
-                    self.move_pane(pane_id, *target_id, *direction, ctx);
+                    match origin {
+                        ActionOrigin::Pane => {
+                            if *group_editors {
+                                self.update_code_pane_drag_group_target(pane_id, *target_id);
+                                ctx.notify();
+                            } else {
+                                self.clear_code_pane_drag_group_target(pane_id);
+                                self.move_pane(pane_id, *target_id, *direction, ctx);
+                            }
+                        }
+                        ActionOrigin::EditorTab(_) => {
+                            // warp-44: ungrouping is finalized on drop, never by mutating the tree
+                            // during the drag (removing the tab here destroyed its Draggable and
+                            // orphaned the gesture). The only thing we do mid-drag is update the
+                            // shared hint so the *destination* pane (where releasing would split a
+                            // new sibling) shows the drop-target accent. The real split happens in
+                            // `DroppedWithinPaneGroup`, after mouse-up.
+                            self.set_editor_tab_split_hint(Some(*target_id), ctx);
+                        }
+                    }
                 }
                 PaneViewEvent::DroppedOnTabBar { origin } => {
+                    if matches!(origin, ActionOrigin::Pane) {
+                        self.clear_code_pane_drag_group_target(pane_id);
+                    }
+                    self.set_editor_tab_split_hint(None, ctx);
+
                     ctx.emit(Event::DroppedOnTabBar {
                         origin: *origin,
                         pane_id,
@@ -1290,6 +1354,11 @@ impl PaneGroup {
                     tab_hover_index,
                     hidden_pane_preview_direction,
                 } => {
+                    if matches!(origin, ActionOrigin::Pane) {
+                        self.clear_code_pane_drag_group_target(pane_id);
+                    }
+                    self.set_editor_tab_split_hint(None, ctx);
+
                     if matches!(origin, ActionOrigin::Pane) {
                         // Clear hidden closed panes since dragging invalidates undo functionality
                         self.clear_hidden_closed_panes(ctx);
@@ -1314,7 +1383,15 @@ impl PaneGroup {
                     })
                 }
 
-                PaneViewEvent::PaneDraggedOutsideTabBarOrPaneGroup => {
+                PaneViewEvent::PaneDraggedOutsideTabBarOrPaneGroup { origin } => {
+                    if matches!(origin, ActionOrigin::Pane) {
+                        self.clear_code_pane_drag_group_target(pane_id);
+                    }
+
+                    // warp-44: the editor tab left a pane body (now over the strip or dead space),
+                    // so no pane is the split destination — clear the hint accent.
+                    self.set_editor_tab_split_hint(None, ctx);
+
                     // If we drag outside of the tab bar or pane group, ensure that there
                     // is no hidden pane
                     self.panes.clear_hidden_panes_from_move();
@@ -1325,11 +1402,79 @@ impl PaneGroup {
                     ctx.emit(Event::TerminalViewStateChanged);
                     ctx.emit(Event::AppStateChanged);
                 }
+                PaneViewEvent::PaneDroppedOutsideTabBarOrPaneGroup { origin } => {
+                    self.clear_code_pane_drag_group_target(pane_id);
+                    self.set_editor_tab_split_hint(None, ctx);
+
+                    // warp-44: an editor tab released away from the tab bar / another pane resolves
+                    // here, because an editor-tab drag does not reliably register the editor body
+                    // as a `PaneDropTargetData` (so the "drop on a pane body" path rarely fires).
+                    // Now that the drag survives to mouse-up (Slice 1), this drop fires, so split
+                    // the tab out into a new sibling pane — the "drag a tab out to its own pane"
+                    // gesture. The last-tab guard in `remove_editor_tab_for_move` keeps a lone-tab
+                    // pane a safe no-op.
+                    let split = if let ActionOrigin::EditorTab(editor_tab_index) = origin {
+                        self.split_editor_tab_into_code_pane(
+                            pane_id,
+                            *editor_tab_index,
+                            pane_id,
+                            ctx,
+                        )
+                    } else {
+                        false
+                    };
+                    if !split {
+                        self.focus_pane_by_id(pane_id, ctx);
+                    }
+                    ctx.emit(Event::TerminalViewStateChanged);
+                    ctx.emit(Event::AppStateChanged);
+                    ctx.notify();
+                }
                 PaneViewEvent::PaneDragEnded => {
                     self.focus_pane_by_id(pane_id, ctx);
                     ctx.emit(Event::TerminalViewStateChanged);
                     ctx.notify();
                 }
+                PaneViewEvent::DroppedWithinPaneGroup {
+                    origin,
+                    target_id,
+                    group_editors,
+                } => match origin {
+                    ActionOrigin::Pane => {
+                        if *group_editors {
+                            let raw_target_id = *target_id;
+                            let remembered_target_id =
+                                self.take_code_pane_drag_group_target(pane_id);
+                            let target_id = remembered_target_id.unwrap_or(raw_target_id);
+                            if self.group_code_pane_into_code_pane(pane_id, target_id, ctx) {
+                                ctx.emit(Event::TerminalViewStateChanged);
+                                ctx.emit(Event::AppStateChanged);
+                                ctx.notify();
+                            }
+                        } else {
+                            self.clear_code_pane_drag_group_target(pane_id);
+                        }
+                    }
+                    ActionOrigin::EditorTab(editor_tab_index) => {
+                        // warp-44: the tab was never removed during the drag, so the source
+                        // CodeView and its Draggable survived intact and this drop actually
+                        // fires. Extract the real tab now (mouse-up is done, so destroying the
+                        // tab element is safe) and split it into a new sibling editor pane.
+                        self.set_editor_tab_split_hint(None, ctx);
+                        if *group_editors
+                            && self.split_editor_tab_into_code_pane(
+                                pane_id,
+                                *editor_tab_index,
+                                *target_id,
+                                ctx,
+                            )
+                        {
+                            ctx.emit(Event::TerminalViewStateChanged);
+                            ctx.emit(Event::AppStateChanged);
+                            ctx.notify();
+                        }
+                    }
+                },
                 PaneViewEvent::PaneHeaderClicked => {
                     self.focus_pane_by_id(pane_id, ctx);
                     ctx.emit(Event::TerminalViewStateChanged);
@@ -3167,6 +3312,7 @@ impl PaneGroup {
             focus_state,
             pane_history,
             pane_contents,
+            code_pane_drag_group_target: None,
             server_api,
             terminal_with_open_share_block_modal: None,
             share_block_modal: share_modal,
@@ -4409,14 +4555,292 @@ impl PaneGroup {
         pane_id: PaneId,
         editor_tab_index: usize,
         ctx: &mut ViewContext<Self>,
-    ) -> Option<Box<dyn AnyPaneContent>> {
-        self.code_pane_by_id(pane_id)
-            .and_then(|pane| {
-                pane.file_view(ctx).update(ctx, |file_view, ctx| {
-                    file_view.remove_tab_for_move(editor_tab_index, ctx)
-                })
+    ) -> Option<EditorTabMove> {
+        let Some(code_pane) = self.code_pane_by_id(pane_id) else {
+            log::debug!(
+                "[warp-44 editor grouping] remove editor tab failed: missing source pane source={pane_id:?} tab={editor_tab_index}"
+            );
+            return None;
+        };
+
+        let file_view = code_pane.file_view(ctx);
+        let tab_count = file_view.as_ref(ctx).tab_count();
+        let pane = file_view.update(ctx, |file_view, ctx| {
+            file_view.remove_tab_for_move(editor_tab_index, ctx)
+        });
+
+        if pane.is_none() {
+            log::debug!(
+                "[warp-44 editor grouping] remove editor tab failed: source={pane_id:?} tab={editor_tab_index} tab_count={tab_count}"
+            );
+        }
+
+        pane
+    }
+
+    fn restore_editor_tab_move(
+        &mut self,
+        source_pane_id: PaneId,
+        original_tab_index: usize,
+        original_active_tab_index: usize,
+        rejected_pane: Box<dyn AnyPaneContent>,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let Some(rejected_code_pane) = rejected_pane.as_any().downcast_ref::<CodePane>() else {
+            log::error!(
+                "[warp-44 ungroup] rollback failed: rejected pane was not a code pane source={source_pane_id:?}"
+            );
+            return false;
+        };
+        let Some(source_code_pane) = self.code_pane_by_id(source_pane_id) else {
+            log::error!(
+                "[warp-44 ungroup] rollback failed: missing source pane source={source_pane_id:?}"
+            );
+            return false;
+        };
+
+        let rejected_file_view = rejected_code_pane.file_view(ctx);
+        let source_file_view = source_code_pane.file_view(ctx);
+        let restored = rejected_file_view.update(ctx, |rejected_code_view, ctx| {
+            source_file_view.update(ctx, |source_code_view, ctx| {
+                source_code_view.restore_tab_from_move_pane(
+                    original_tab_index,
+                    original_active_tab_index,
+                    rejected_code_view,
+                    ctx,
+                )
             })
-            .map(|p| Box::new(p) as Box<dyn AnyPaneContent>)
+        });
+
+        if restored {
+            self.focus_pane_by_id(source_pane_id, ctx);
+            log::debug!(
+                "[warp-44 ungroup] rollback restored moved editor tab: source={source_pane_id:?} tab={original_tab_index}"
+            );
+        } else {
+            log::error!(
+                "[warp-44 ungroup] rollback failed to restore moved editor tab: source={source_pane_id:?} tab={original_tab_index}"
+            );
+        }
+
+        restored
+    }
+
+    fn update_code_pane_drag_group_target(
+        &mut self,
+        source_pane_id: PaneId,
+        target_pane_id: PaneId,
+    ) {
+        if source_pane_id != target_pane_id
+            && self.code_pane_by_id(source_pane_id).is_some()
+            && self.code_pane_by_id(target_pane_id).is_some()
+        {
+            log::debug!(
+                "[warp-44 editor grouping] remembered group target: source={source_pane_id:?} target={target_pane_id:?}"
+            );
+            self.code_pane_drag_group_target = Some(CodePaneDragGroupTarget {
+                source_pane_id,
+                target_pane_id,
+            });
+        } else {
+            self.clear_code_pane_drag_group_target(source_pane_id);
+        }
+    }
+
+    fn take_code_pane_drag_group_target(&mut self, source_pane_id: PaneId) -> Option<PaneId> {
+        let target = self
+            .code_pane_drag_group_target
+            .filter(|target| target.source_pane_id == source_pane_id)?;
+        self.code_pane_drag_group_target = None;
+        Some(target.target_pane_id)
+    }
+
+    fn clear_code_pane_drag_group_target(&mut self, source_pane_id: PaneId) {
+        if self
+            .code_pane_drag_group_target
+            .is_some_and(|target| target.source_pane_id == source_pane_id)
+        {
+            log::debug!(
+                "[warp-44 editor grouping] cleared remembered group target: source={source_pane_id:?}"
+            );
+            self.code_pane_drag_group_target = None;
+        }
+    }
+
+    /// warp-44: set (or clear) the pane that should show the "release to split here" accent while
+    /// an editor tab is dragged. Writes the shared `EditorTabSplitHintModel` so each `PaneView`
+    /// can self-identify in render; notifies only on change to avoid redundant re-renders.
+    fn set_editor_tab_split_hint(&self, target: Option<PaneId>, ctx: &mut ViewContext<Self>) {
+        EditorTabSplitHintModel::handle(ctx).update(ctx, |hint, model_ctx| {
+            if hint.target_pane != target {
+                hint.target_pane = target;
+                model_ctx.notify();
+            }
+        });
+    }
+
+    pub(crate) fn group_code_pane_into_code_pane(
+        &mut self,
+        source_pane_id: PaneId,
+        target_pane_id: PaneId,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let Some(source_code_pane) = self.code_pane_by_id(source_pane_id) else {
+            log::debug!(
+                "[warp-44 editor grouping] abort: missing source code pane source={source_pane_id:?} target={target_pane_id:?}"
+            );
+            return false;
+        };
+        let source_code_view = source_code_pane.file_view(ctx);
+        let source = source_code_view.as_ref(ctx).source().clone();
+        let source_tab_count = source_code_view.as_ref(ctx).tab_count();
+
+        if source_pane_id == target_pane_id {
+            log::debug!(
+                "[warp-44 editor grouping] same-pane drop: source={source_pane_id:?} target={target_pane_id:?} source_tabs={source_tab_count}"
+            );
+            self.focus_pane_by_id(target_pane_id, ctx);
+            return true;
+        }
+
+        let Some(target_code_pane) = self.code_pane_by_id(target_pane_id) else {
+            log::debug!(
+                "[warp-44 editor grouping] abort: missing target code pane source={source_pane_id:?} target={target_pane_id:?} source_tabs={source_tab_count}"
+            );
+            return false;
+        };
+        let target_code_view = target_code_pane.file_view(ctx);
+        let target_tab_count = target_code_view.as_ref(ctx).tab_count();
+        let pane_group_id = ctx.view_id();
+        let window_id = ctx.window_id();
+
+        log::debug!(
+            "[warp-44 editor grouping] begin: source={source_pane_id:?} target={target_pane_id:?} source_view={:?} target_view={:?} source_tabs={source_tab_count} target_tabs={target_tab_count}",
+            source_code_view.id(),
+            target_code_view.id()
+        );
+
+        if source_code_view.id() == target_code_view.id() {
+            log::debug!(
+                "[warp-44 editor grouping] abort: source and target share CodeView source={source_pane_id:?} target={target_pane_id:?} view={:?}",
+                source_code_view.id()
+            );
+            self.focus_pane_by_id(target_pane_id, ctx);
+            return true;
+        }
+
+        let merged = source_code_view.update(ctx, |source_code_view, ctx| {
+            if source_code_view.tab_count() == 0 {
+                log::debug!(
+                    "[warp-44 editor grouping] abort: source CodeView had zero tabs during merge source={source_pane_id:?} target={target_pane_id:?}"
+                );
+                return false;
+            }
+
+            target_code_view.update(ctx, |target_code_view, ctx| {
+                let insert_index = target_code_view.tab_count();
+                target_code_view.insert_tabs(insert_index, source_code_view, ctx)
+            })
+        });
+
+        if !merged {
+            log::debug!(
+                "[warp-44 editor grouping] abort: insert failed source={source_pane_id:?} target={target_pane_id:?}"
+            );
+            return false;
+        }
+
+        let target_tab_count_after_insert = target_code_view.as_ref(ctx).tab_count();
+        log::debug!(
+            "[warp-44 editor grouping] inserted tabs: source={source_pane_id:?} target={target_pane_id:?} target_tabs_before={target_tab_count} target_tabs_after_insert={target_tab_count_after_insert}"
+        );
+
+        if self.remove_pane_for_move(&source_pane_id, ctx).is_none() {
+            log::error!(
+                "[warp-44 editor grouping] failed to remove source pane after insert: source={source_pane_id:?} target={target_pane_id:?}"
+            );
+            self.focus_pane_by_id(source_pane_id, ctx);
+            return false;
+        }
+
+        CodeManager::handle(ctx).update(ctx, |manager, _ctx| {
+            manager.deregister_pane_if_matches(&source, source_pane_id);
+            manager.register_pane_replacing_existing(
+                pane_group_id,
+                window_id,
+                target_pane_id,
+                source,
+            );
+        });
+        log::debug!(
+            "[warp-44 editor grouping] success: source={source_pane_id:?} removed=true target={target_pane_id:?} target_tabs_after={target_tab_count_after_insert}"
+        );
+        self.focus_pane_by_id(target_pane_id, ctx);
+        true
+    }
+
+    pub(crate) fn split_editor_tab_into_code_pane(
+        &mut self,
+        source_pane_id: PaneId,
+        editor_tab_index: usize,
+        target_pane_id: PaneId,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let Some(editor_tab_move) =
+            self.remove_editor_tab_for_move(source_pane_id, editor_tab_index, ctx)
+        else {
+            return false;
+        };
+
+        let original_tab_index = editor_tab_move.original_tab_index();
+        let original_active_tab_index = editor_tab_move.original_active_tab_index();
+        let moved_source = editor_tab_move
+            .pane()
+            .file_view(ctx)
+            .as_ref(ctx)
+            .source()
+            .clone();
+        let pane_group_id = ctx.view_id();
+        let window_id = ctx.window_id();
+        let pane = Box::new(editor_tab_move.into_pane()) as Box<dyn AnyPaneContent>;
+
+        match self.try_add_pane_with_options(
+            pane,
+            AddPaneOptions {
+                direction: Direction::Right,
+                base_pane_id: Some(target_pane_id),
+                focus_new_pane: true,
+                visibility: NewPaneVisibility::Visible,
+                emit_app_state_changed: true,
+                attach_mode: PaneAttachMode::MoveExistingEditorTab,
+            },
+            ctx,
+        ) {
+            Ok(new_pane_id) => {
+                CodeManager::handle(ctx).update(ctx, |manager, _ctx| {
+                    manager.register_pane_replacing_existing(
+                        pane_group_id,
+                        window_id,
+                        new_pane_id,
+                        moved_source,
+                    );
+                });
+                log::debug!(
+                    "[warp-44 ungroup] split editor tab into new pane: source={source_pane_id:?} tab={editor_tab_index} target={target_pane_id:?} new_pane={new_pane_id:?}"
+                );
+                true
+            }
+            Err(rejected_pane) => {
+                self.restore_editor_tab_move(
+                    source_pane_id,
+                    original_tab_index,
+                    original_active_tab_index,
+                    rejected_pane,
+                    ctx,
+                );
+                false
+            }
+        }
     }
 
     /// The generic pane at `index`, if it exists.
@@ -5210,6 +5634,7 @@ impl PaneGroup {
                 focus_new_pane: false,
                 visibility: NewPaneVisibility::HiddenForMove,
                 emit_app_state_changed: true,
+                attach_mode: PaneAttachMode::Normal,
             },
             ctx,
         );
@@ -5222,7 +5647,9 @@ impl PaneGroup {
         pane: C,
         ctx: &mut ViewContext<Self>,
     ) -> Option<PaneId> {
-        let pane_id = self.init_pane(Box::new(pane), ctx)?;
+        let pane_id = self
+            .init_pane(Box::new(pane), PaneAttachMode::Normal, ctx)
+            .ok()?;
         ctx.emit(Event::AppStateChanged);
         Some(pane_id)
     }
@@ -6670,8 +7097,9 @@ impl PaneGroup {
     fn init_pane(
         &mut self,
         pane: Box<dyn AnyPaneContent>,
+        attach_mode: PaneAttachMode,
         ctx: &mut ViewContext<Self>,
-    ) -> Option<PaneId> {
+    ) -> Result<PaneId, Box<dyn AnyPaneContent>> {
         let pane_id = pane.as_pane().id();
         self.pane_contents.insert(pane_id, pane);
         // The HashMap entry API would let us insert and then get a mutable reference to the
@@ -6682,12 +7110,15 @@ impl PaneGroup {
             .get(&pane_id)
             .expect("Just inserted pane");
 
-        if !self.try_attach_pane(pane.as_ref(), ctx) {
+        if !self.try_attach_pane_with_mode(pane.as_ref(), attach_mode, ctx) {
             // Remove the pane we didn't end up attaching the pane.
-            self.pane_contents.remove(&pane_id);
-            return None;
+            let pane = self
+                .pane_contents
+                .remove(&pane_id)
+                .expect("Just inserted pane");
+            return Err(pane);
         }
-        Some(pane_id)
+        Ok(pane_id)
     }
 
     /// Adds a new pane to the tree with configurable visibility/focus/event behavior.
@@ -6697,13 +7128,22 @@ impl PaneGroup {
         options: AddPaneOptions,
         ctx: &mut ViewContext<Self>,
     ) -> Option<PaneId> {
+        self.try_add_pane_with_options(new_pane, options, ctx).ok()
+    }
+
+    fn try_add_pane_with_options(
+        &mut self,
+        new_pane: Box<dyn AnyPaneContent>,
+        options: AddPaneOptions,
+        ctx: &mut ViewContext<Self>,
+    ) -> Result<PaneId, Box<dyn AnyPaneContent>> {
         let pane_id = new_pane.as_pane().id();
         match options.visibility {
             NewPaneVisibility::Visible => {}
             NewPaneVisibility::HiddenForMove => self.panes.hide_pane_for_move(pane_id),
         }
 
-        let pane_id = self.init_pane(new_pane, ctx)?;
+        let pane_id = self.init_pane(new_pane, options.attach_mode, ctx)?;
         let split_succeeded = match options.base_pane_id {
             Some(base_pane_id) => self.panes.split(base_pane_id, pane_id, options.direction),
             None => {
@@ -6719,9 +7159,16 @@ impl PaneGroup {
                 options.base_pane_id
             );
             self.panes.remove_hidden_pane(pane_id);
-            self.clean_up_pane(pane_id, ctx);
-            self.pane_contents.remove(&pane_id);
-            return None;
+            let pane = self
+                .pane_contents
+                .remove(&pane_id)
+                .expect("Just inserted pane");
+            let detach_type = match options.attach_mode {
+                PaneAttachMode::Normal => DetachType::Closed,
+                PaneAttachMode::MoveExistingEditorTab => DetachType::Moved,
+            };
+            pane.as_pane().detach(self, detach_type, ctx);
+            return Err(pane);
         }
         self.restore_missing_child_agent_panes_for_terminal_pane_if_needed(pane_id, ctx);
 
@@ -6735,7 +7182,7 @@ impl PaneGroup {
         if options.emit_app_state_changed {
             ctx.emit(Event::AppStateChanged);
         }
-        Some(pane_id)
+        Ok(pane_id)
     }
 
     /// Adds a new pane to the tree. If `base_pane_id` is `Some`, the new pane is inserted relative
@@ -6769,6 +7216,7 @@ impl PaneGroup {
                 focus_new_pane,
                 visibility: NewPaneVisibility::Visible,
                 emit_app_state_changed: true,
+                attach_mode: PaneAttachMode::Normal,
             },
             ctx,
         )
@@ -7681,11 +8129,28 @@ impl PaneGroup {
     /// Attempts to attach a pane, calling pre_attach first.
     /// Returns true if attachment succeeded, false if pre_attach prevented it.
     fn try_attach_pane(&self, pane: &dyn AnyPaneContent, ctx: &mut ViewContext<Self>) -> bool {
-        if pane.pre_attach(self, ctx) {
-            self.attach_pane(pane, ctx);
-            true
-        } else {
-            false
+        self.try_attach_pane_with_mode(pane, PaneAttachMode::Normal, ctx)
+    }
+
+    fn try_attach_pane_with_mode(
+        &self,
+        pane: &dyn AnyPaneContent,
+        attach_mode: PaneAttachMode,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        match attach_mode {
+            PaneAttachMode::Normal => {
+                if pane.pre_attach(self, ctx) {
+                    self.attach_pane(pane, ctx);
+                    true
+                } else {
+                    false
+                }
+            }
+            PaneAttachMode::MoveExistingEditorTab => {
+                self.attach_pane(pane, ctx);
+                true
+            }
         }
     }
 

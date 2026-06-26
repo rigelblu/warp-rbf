@@ -52,6 +52,7 @@ use crate::pane_group::pane::view::header::components::{
     CenteredHeaderEdgeWidth,
 };
 use crate::pane_group::pane::view::header::render_pane_header_draggable;
+use crate::pane_group::pane::view::PaneDropTargetData;
 use crate::pane_group::pane::{view, ActionOrigin, PaneHeaderAction};
 use crate::pane_group::{
     BackingView, CodePane, PaneConfiguration, PaneConfigurationEvent, PaneDragDropLocation,
@@ -209,6 +210,30 @@ pub struct TabData {
     editor_view: ViewHandle<LocalCodeEditorView>,
     mouse_state_handles: TabDataMouseStateHandles,
     preview: bool,
+}
+
+pub struct EditorTabMove {
+    pane: CodePane,
+    original_tab_index: usize,
+    original_active_tab_index: usize,
+}
+
+impl EditorTabMove {
+    pub fn pane(&self) -> &CodePane {
+        &self.pane
+    }
+
+    pub fn original_tab_index(&self) -> usize {
+        self.original_tab_index
+    }
+
+    pub fn original_active_tab_index(&self) -> usize {
+        self.original_active_tab_index
+    }
+
+    pub fn into_pane(self) -> CodePane {
+        self.pane
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1195,16 +1220,57 @@ impl CodeView {
         &mut self,
         index: usize,
         ctx: &mut ViewContext<Self>,
-    ) -> Option<CodePane> {
-        self.tab_at(index).and_then(|t| t.local_path()).map(|path| {
-            let source = CodeSource::Link {
-                path,
-                range_start: None,
-                range_end: None,
-            };
-            self.remove_tab_data_index(index, ctx);
-            CodePane::new(source, None, ctx)
+    ) -> Option<EditorTabMove> {
+        if self.tab_group.len() <= 1 || index >= self.tab_group.len() {
+            return None;
+        }
+
+        let original_active_tab_index = self.active_tab_index;
+        let tab = self.tab_group.remove(index);
+        self.set_active_tab_index_after_remove(index, ctx);
+
+        let source = tab
+            .location
+            .clone()
+            .map(|location| CodeSource::FileTree { location })
+            .unwrap_or(CodeSource::New {
+                default_directory: None,
+            });
+        let view = ctx.add_typed_action_view(move |ctx| {
+            let mut view = Self::new_internal(source, ctx);
+            view.tab_group.push(tab);
+            #[cfg(feature = "local_fs")]
+            {
+                view.update_markdown_mode_segmented_control(ctx);
+            }
+            view
+        });
+
+        Some(EditorTabMove {
+            pane: CodePane::from_view(view, ctx),
+            original_tab_index: index,
+            original_active_tab_index,
         })
+    }
+
+    pub fn restore_tab_from_move_pane(
+        &mut self,
+        index: usize,
+        active_tab_index: usize,
+        moved_code_view: &mut CodeView,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        if moved_code_view.tab_group.len() != 1 {
+            return false;
+        }
+
+        let mut tab = moved_code_view.tab_group.remove(0);
+        tab.preview = false;
+
+        let insert_index = index.min(self.tab_group.len());
+        self.tab_group.insert(insert_index, tab);
+        self.set_active_tab_index(active_tab_index.min(self.tab_group.len() - 1), ctx);
+        true
     }
 
     fn remove_tab_with_intent(
@@ -1599,6 +1665,15 @@ impl CodeView {
                         },
                     ),
                 );
+                ctx.dispatch_typed_action(
+                    PaneHeaderAction::<CodeViewAction, CodeViewAction>::PaneHeaderDragged {
+                        origin: ActionOrigin::EditorTab(index),
+                        drag_location: PaneDragDropLocation::Other,
+                        drag_position,
+                        group_editors: false,
+                        precomputed_tab_hover_index: None,
+                    },
+                );
             } else if let Some(data) =
                 data.and_then(|data| data.as_any().downcast_ref::<TabBarDropTargetData>())
             {
@@ -1614,6 +1689,29 @@ impl CodeView {
                         origin: ActionOrigin::EditorTab(index),
                         drag_location: PaneDragDropLocation::TabBar(data.tab_bar_location),
                         drag_position,
+                        group_editors: false,
+                        precomputed_tab_hover_index: None,
+                    },
+                );
+            } else if let Some(data) =
+                data.and_then(|data| data.as_any().downcast_ref::<PaneDropTargetData>())
+            {
+                ctx.dispatch_typed_action(
+                    PaneHeaderAction::<CodeViewAction, CodeViewAction>::CustomAction(
+                        CodeViewAction::ClearWorkspaceTabGroupDragPositions,
+                    ),
+                );
+                ctx.dispatch_typed_action(
+                    PaneHeaderAction::<CodeViewAction, CodeViewAction>::CustomAction(
+                        CodeViewAction::ClearEditorTabGroupDragPositions,
+                    ),
+                );
+                ctx.dispatch_typed_action(
+                    PaneHeaderAction::<CodeViewAction, CodeViewAction>::PaneHeaderDragged {
+                        origin: ActionOrigin::EditorTab(index),
+                        drag_location: PaneDragDropLocation::PaneGroup(data.id()),
+                        drag_position,
+                        group_editors: true,
                         precomputed_tab_hover_index: None,
                     },
                 );
@@ -1629,12 +1727,26 @@ impl CodeView {
                         CodeViewAction::ClearEditorTabGroupDragPositions,
                     ),
                 );
+                ctx.dispatch_typed_action(
+                    PaneHeaderAction::<CodeViewAction, CodeViewAction>::PaneHeaderDragged {
+                        origin: ActionOrigin::EditorTab(index),
+                        drag_location: PaneDragDropLocation::Other,
+                        drag_position,
+                        group_editors: false,
+                        precomputed_tab_hover_index: None,
+                    },
+                );
             }
         })
         .on_drop(move |ctx, _, drag_position, data| {
             if let Some(tab_group_index) =
                 data.and_then(|data| data.as_any().downcast_ref::<EditorTabBarDropTargetData>())
             {
+                // warp-44: a drop on the editor tab strip is a reorder, handled by DropAtIndex
+                // below. It must NOT also emit PaneHeaderDropped{Other}, which the pane group
+                // now treats as an ungroup request and would split the tab out — corrupting the
+                // reorder (the tab is removed, then DropAtIndex runs on a stale index). Only a
+                // dead-space release (the else branch) should ungroup.
                 ctx.dispatch_typed_action(
                     PaneHeaderAction::<CodeViewAction, CodeViewAction>::CustomAction(
                         CodeViewAction::DropAtIndex {
@@ -1651,6 +1763,25 @@ impl CodeView {
                     PaneHeaderAction::<CodeViewAction, CodeViewAction>::PaneHeaderDropped {
                         origin: ActionOrigin::EditorTab(index),
                         drop_location: PaneDragDropLocation::TabBar(data.tab_bar_location),
+                        group_editors: false,
+                    },
+                );
+            } else if let Some(data) =
+                data.and_then(|data| data.as_any().downcast_ref::<PaneDropTargetData>())
+            {
+                ctx.dispatch_typed_action(
+                    PaneHeaderAction::<CodeViewAction, CodeViewAction>::PaneHeaderDropped {
+                        origin: ActionOrigin::EditorTab(index),
+                        drop_location: PaneDragDropLocation::PaneGroup(data.id()),
+                        group_editors: true,
+                    },
+                );
+            } else {
+                ctx.dispatch_typed_action(
+                    PaneHeaderAction::<CodeViewAction, CodeViewAction>::PaneHeaderDropped {
+                        origin: ActionOrigin::EditorTab(index),
+                        drop_location: PaneDragDropLocation::Other,
+                        group_editors: false,
                     },
                 );
             }
@@ -2116,6 +2247,53 @@ impl CodeView {
 
         self.tab_group.extend(to_extend);
         self.set_active_tab_index(active_tab_index, ctx);
+    }
+
+    /// Moves tabs from another `CodeView`, preserving tabs without stable file locations.
+    pub fn move_tabs_from(
+        &mut self,
+        source_code_view: &mut CodeView,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        if source_code_view.tab_group.is_empty() {
+            return false;
+        }
+
+        let insert_index = self.tab_group.len();
+        let source_active_tab_index = source_code_view.active_tab_index();
+        let mut tabs = std::mem::take(&mut source_code_view.tab_group);
+        for tab in &mut tabs {
+            tab.preview = false;
+        }
+
+        let active_tab_index = insert_index + source_active_tab_index.min(tabs.len() - 1);
+        self.tab_group.extend(tabs);
+        self.set_active_tab_index(active_tab_index, ctx);
+        true
+    }
+
+    /// Inserts tabs from another `CodeView`, preserving tabs without stable file locations.
+    pub fn insert_tabs(
+        &mut self,
+        index: usize,
+        source_code_view: &CodeView,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        if source_code_view.tab_group.is_empty() {
+            return false;
+        }
+
+        let insert_index = index.min(self.tab_group.len());
+        let mut tabs = source_code_view.tab_group.clone();
+        for tab in &mut tabs {
+            tab.preview = false;
+        }
+        let active_tab_index =
+            insert_index + source_code_view.active_tab_index().min(tabs.len() - 1);
+
+        self.tab_group.splice(insert_index..insert_index, tabs);
+        self.set_active_tab_index(active_tab_index, ctx);
+        true
     }
 }
 

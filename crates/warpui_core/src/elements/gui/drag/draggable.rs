@@ -8,7 +8,7 @@ use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 
 use crate::elements::{DropTargetData, Point};
-use crate::event::{DispatchedEvent, Event};
+use crate::event::{DispatchedEvent, Event, ModifiersState};
 use crate::platform::Cursor;
 use crate::presenter::PositionCache;
 use crate::scene::{ClipBounds, ZIndex};
@@ -154,6 +154,9 @@ type Handler = Box<dyn FnMut(&mut EventContext, &AppContext, RectF)>;
 /// the `Draggable` was dropped on a `DropTarget`.
 type DragDropHandler =
     Box<dyn FnMut(&mut EventContext, &AppContext, RectF, Option<&dyn DropTargetData>)>;
+type DragDropWithModifiersHandler = Box<
+    dyn FnMut(&mut EventContext, &AppContext, RectF, Option<&dyn DropTargetData>, ModifiersState),
+>;
 
 pub enum AcceptedByDropTarget {
     Yes,
@@ -256,8 +259,10 @@ pub struct Draggable {
 
     start_handler: Option<Handler>,
     drag_handler: Option<DragDropHandler>,
+    drag_with_modifiers_handler: Option<DragDropWithModifiersHandler>,
     is_accepted_by_drop_target_handler: Option<AcceptedByDropTargetHandler>,
     drop_handler: Option<DragDropHandler>,
+    drop_with_modifiers_handler: Option<DragDropWithModifiersHandler>,
     /// Whether to use the copy cursor while dragging on a valid drop target.
     use_copy_cursor_when_dragging_over_drop_target: bool,
 }
@@ -278,8 +283,10 @@ impl Draggable {
             defer_to_handled_child_mouse_down: false,
             start_handler: None,
             drag_handler: None,
+            drag_with_modifiers_handler: None,
             is_accepted_by_drop_target_handler: None,
             drop_handler: None,
+            drop_with_modifiers_handler: None,
             use_copy_cursor_when_dragging_over_drop_target: false,
         }
     }
@@ -362,12 +369,42 @@ impl Draggable {
         self
     }
 
+    /// Add a callback which will be called on mouse move while dragging, with modifier state.
+    pub fn on_drag_with_modifiers<F>(mut self, callback: F) -> Self
+    where
+        F: FnMut(
+                &mut EventContext,
+                &AppContext,
+                RectF,
+                Option<&dyn DropTargetData>,
+                ModifiersState,
+            ) + 'static,
+    {
+        self.drag_with_modifiers_handler = Some(Box::new(callback));
+        self
+    }
+
     /// Add a callback which will be called on mouse up when dragging ends.
     pub fn on_drop<F>(mut self, callback: F) -> Self
     where
         F: FnMut(&mut EventContext, &AppContext, RectF, Option<&dyn DropTargetData>) + 'static,
     {
         self.drop_handler = Some(Box::new(callback));
+        self
+    }
+
+    /// Add a callback which will be called on mouse up when dragging ends, with modifier state.
+    pub fn on_drop_with_modifiers<F>(mut self, callback: F) -> Self
+    where
+        F: FnMut(
+                &mut EventContext,
+                &AppContext,
+                RectF,
+                Option<&dyn DropTargetData>,
+                ModifiersState,
+            ) + 'static,
+    {
+        self.drop_with_modifiers_handler = Some(Box::new(callback));
         self
     }
 
@@ -397,12 +434,40 @@ impl Draggable {
         self.drag_handler = Some(Box::new(callback));
     }
 
+    /// Add a callback which will be called on mouse move while dragging, with modifier state.
+    pub fn set_on_drag_with_modifiers<F>(&mut self, callback: F)
+    where
+        F: FnMut(
+                &mut EventContext,
+                &AppContext,
+                RectF,
+                Option<&dyn DropTargetData>,
+                ModifiersState,
+            ) + 'static,
+    {
+        self.drag_with_modifiers_handler = Some(Box::new(callback));
+    }
+
     /// Add a callback which will be called on mouse up when dragging ends.
     pub fn set_on_drop<F>(&mut self, callback: F)
     where
         F: FnMut(&mut EventContext, &AppContext, RectF, Option<&dyn DropTargetData>) + 'static,
     {
         self.drop_handler = Some(Box::new(callback));
+    }
+
+    /// Add a callback which will be called on mouse up when dragging ends, with modifier state.
+    pub fn set_on_drop_with_modifiers<F>(&mut self, callback: F)
+    where
+        F: FnMut(
+                &mut EventContext,
+                &AppContext,
+                RectF,
+                Option<&dyn DropTargetData>,
+                ModifiersState,
+            ) + 'static,
+    {
+        self.drop_with_modifiers_handler = Some(Box::new(callback));
     }
 
     /// Determine the drag origin based on the specified axis and any cached bounds.
@@ -625,7 +690,7 @@ impl Element for Draggable {
                 }
                 handled
             }
-            Event::LeftMouseUp { .. } => match current_state {
+            Event::LeftMouseUp { modifiers, .. } => match current_state {
                 DragState::None => handled,
                 DragState::WaitingToDrag { .. } => {
                     self.state.store(DragState::None);
@@ -653,13 +718,20 @@ impl Element for Draggable {
                     if let Some(callback) = self.drop_handler.as_mut() {
                         callback(ctx, app, rect, draggable_data.as_deref());
                     }
+                    if let Some(callback) = self.drop_with_modifiers_handler.as_mut() {
+                        callback(ctx, app, rect, draggable_data.as_deref(), *modifiers);
+                    }
 
                     ctx.reset_cursor();
                     ctx.notify();
                     true
                 }
             },
-            Event::LeftMouseDragged { position, .. } => match current_state {
+            Event::LeftMouseDragged {
+                position,
+                modifiers,
+                ..
+            } => match current_state {
                 DragState::None => handled,
                 DragState::WaitingToDrag {
                     mouse_down_position,
@@ -732,6 +804,14 @@ impl Element for Draggable {
                         rect,
                         draggable_data.as_deref(),
                     );
+                    dispatch_drag_drop_with_modifiers_callback(
+                        self.drag_with_modifiers_handler.as_mut(),
+                        ctx,
+                        app,
+                        rect,
+                        draggable_data.as_deref(),
+                        *modifiers,
+                    );
 
                     ctx.notify();
                     true
@@ -788,5 +868,18 @@ fn dispatch_drag_drop_callback(
 ) {
     if let Some(callback) = callback {
         callback(ctx, app, rect, drop_target_data);
+    }
+}
+
+fn dispatch_drag_drop_with_modifiers_callback(
+    callback: Option<&mut DragDropWithModifiersHandler>,
+    ctx: &mut EventContext,
+    app: &AppContext,
+    rect: RectF,
+    drop_target_data: Option<&dyn DropTargetData>,
+    modifiers: ModifiersState,
+) {
+    if let Some(callback) = callback {
+        callback(ctx, app, rect, drop_target_data, modifiers);
     }
 }
