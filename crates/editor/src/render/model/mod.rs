@@ -168,7 +168,7 @@ const DASHED_UNDERLINE_GAP_LENGTH: f32 = 4.;
 
 /// In the future, we should also support MinimumWidth(f32) setting so the content will
 /// be laid out with a minimum width that could be larger than the viewport.
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WidthSetting {
     #[default]
     FitViewport,
@@ -1834,6 +1834,19 @@ impl RenderState {
     pub fn with_width_setting(mut self, setting: WidthSetting) -> Self {
         self.width_setting = setting;
         self
+    }
+
+    pub fn set_width_setting(&mut self, setting: WidthSetting, ctx: &mut ModelContext<Self>) {
+        if self.width_setting == setting {
+            return;
+        }
+
+        self.width_setting = setting;
+        ctx.emit(RenderEvent::NeedsResize);
+    }
+
+    pub fn width_setting(&self) -> WidthSetting {
+        self.width_setting
     }
 
     /// Whether the surrounding container for this render state already provides horizontal

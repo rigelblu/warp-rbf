@@ -50,6 +50,9 @@ This is my ~~fork~~ flavour of [Warp](https://github.com/warpdotdev/Warp), simil
 **Toggle editor line-number mode from Vim**
 — Toggle the code editor's line-number mode between absolute and relative with the Vim shortcut `gn` to easily calculate vertical motions.
 
+**Toggle editor wrapping from Vim**
+— Toggle the code editor's soft wrap state on/off with the Vim shortcut `zw` to easily inspect long lines.
+
 ## 🟠⋯ Settings, Themes, and Data
 Copy your regular warp configs
 ```

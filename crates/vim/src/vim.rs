@@ -592,6 +592,8 @@ pub enum VimEventType {
     ShowHover,
     /// Toggle code-editor line-number mode. Triggered by `gn`.
     ToggleLineNumberMode,
+    /// Toggle code-editor soft wrapping. Triggered by `zw`.
+    ToggleSoftWrap,
     /// Center the current line vertically in the viewport. Triggered by `zz`.
     CenterCursorVertically,
     /// Move cursor and scroll viewport down by half a page. Triggered by `<C-d>`.
@@ -657,6 +659,7 @@ impl VimEventType {
             | VimEventType::FindReferences
             | VimEventType::ShowHover
             | VimEventType::ToggleLineNumberMode
+            | VimEventType::ToggleSoftWrap
             | VimEventType::CenterCursorVertically
             | VimEventType::ScrollHalfPageDown
             | VimEventType::ScrollHalfPageUp => None,
@@ -1065,6 +1068,7 @@ impl VimFSA {
         let event = match action {
             PendingAction::Z => match c {
                 'z' => VimEventType::CenterCursorVertically,
+                'w' => VimEventType::ToggleSoftWrap,
                 _ => {
                     self.clear();
                     return None;
@@ -1939,6 +1943,7 @@ where
             VimEventType::FindReferences => self.find_references(ctx),
             VimEventType::ShowHover => self.show_hover(ctx),
             VimEventType::ToggleLineNumberMode => self.toggle_line_number_mode(ctx),
+            VimEventType::ToggleSoftWrap => self.toggle_soft_wrap(ctx),
             VimEventType::CenterCursorVertically => self.center_cursor_vertically(ctx),
             VimEventType::ScrollHalfPageDown => self.scroll_half_page_down(event.count, ctx),
             VimEventType::ScrollHalfPageUp => self.scroll_half_page_up(event.count, ctx),
@@ -2062,6 +2067,8 @@ pub trait VimHandler {
     fn show_hover(&mut self, _ctx: &mut ViewContext<Self>) {}
     /// Toggle code-editor line-number mode (gn).
     fn toggle_line_number_mode(&mut self, _ctx: &mut ViewContext<Self>) {}
+    /// Toggle code-editor soft wrapping (zw).
+    fn toggle_soft_wrap(&mut self, _ctx: &mut ViewContext<Self>) {}
     /// Center the current line vertically in the viewport (zz).
     fn center_cursor_vertically(&mut self, _ctx: &mut ViewContext<Self>) {}
     /// Move the cursor down `count` half-pages and scroll the viewport (`<C-d>`).

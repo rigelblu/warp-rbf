@@ -40,6 +40,10 @@ fn code_editor_line_number_mode(
     })
 }
 
+fn editor_soft_wrap(editor: &ViewHandle<EditorView>, app: &App) -> bool {
+    editor.read(app, |view, _| view.soft_wrap)
+}
+
 #[test]
 fn test_vim_toggle_code_editor_line_number_mode() {
     App::test((), |mut app| async move {
@@ -68,6 +72,46 @@ fn test_vim_toggle_code_editor_line_number_mode() {
         assert_eq!(
             code_editor_line_number_mode(&editor, &app),
             CodeEditorLineNumberMode::Absolute
+        );
+    });
+}
+
+#[test]
+fn test_vim_toggle_code_editor_soft_wrap() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let editor = add_editor_vim_normal_mode("first line\nsecond line\nthird line", &mut app);
+
+        editor.update(&mut app, |view, ctx| {
+            view.select_ranges(vec![DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)], ctx)
+                .unwrap();
+        });
+
+        assert!(!editor_soft_wrap(&editor, &app));
+        assert_eq!(
+            editor.read(&app, |view, ctx| view.single_cursor_to_point(ctx)),
+            Some(Point::new(1, 3))
+        );
+
+        editor.update(&mut app, |view, ctx| {
+            view.vim_user_insert("zw", ctx);
+        });
+
+        assert!(editor_soft_wrap(&editor, &app));
+        assert_eq!(
+            editor.read(&app, |view, ctx| view.single_cursor_to_point(ctx)),
+            Some(Point::new(1, 3))
+        );
+
+        editor.update(&mut app, |view, ctx| {
+            view.vim_user_insert("zw", ctx);
+        });
+
+        assert!(!editor_soft_wrap(&editor, &app));
+        assert_eq!(
+            editor.read(&app, |view, ctx| view.single_cursor_to_point(ctx)),
+            Some(Point::new(1, 3))
         );
     });
 }
