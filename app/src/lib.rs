@@ -1256,6 +1256,10 @@ pub(crate) fn initialize_app(
     // captured by the HTTP client hooks.
     ctx.add_singleton_model(|_ctx| NetworkLogModel::default());
 
+    // warp-44: shared drag state for the editor-tab ungroup hint (which pane shows the
+    // "release to split here" accent). Written by PaneGroup, read by each PaneView in render.
+    ctx.add_singleton_model(|_ctx| crate::pane_group::EditorTabSplitHintModel::default());
+
     // Create a shared IAP state for staging builds. The same `Arc<IapState>`
     // is handed to both `ServerApi` (for sync reads on the request path) and
     // `IapManager` (which owns refresh logic on the main thread).

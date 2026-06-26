@@ -306,6 +306,49 @@ impl CodeManager {
         self.source_to_pane_data.remove(&source.omit_line_col());
     }
 
+    /// De-register a pane only if the source still points to the pane being removed.
+    pub fn deregister_pane_if_matches(&mut self, source: &CodeSource, pane_id: PaneId) {
+        let source = source.omit_line_col();
+        if self
+            .source_to_pane_data
+            .get(&source)
+            .is_some_and(|data| data.locator.pane_id == pane_id)
+        {
+            log::debug!(
+                "[warp-44 editor grouping] CodeManager deregister matched source={source:?} pane={pane_id:?}"
+            );
+            self.source_to_pane_data.remove(&source);
+        } else {
+            log::debug!(
+                "[warp-44 editor grouping] CodeManager deregister skipped source={source:?} pane={pane_id:?}"
+            );
+        }
+    }
+
+    /// Register a pane as the current owner for a source, replacing a stale owner.
+    pub fn register_pane_replacing_existing(
+        &mut self,
+        pane_group_id: EntityId,
+        window_id: WindowId,
+        pane_id: PaneId,
+        source: CodeSource,
+    ) {
+        log::debug!(
+            "[warp-44 editor grouping] CodeManager register source={:?} pane_group={pane_group_id:?} pane={pane_id:?}",
+            source.omit_line_col()
+        );
+        self.source_to_pane_data.insert(
+            source.omit_line_col(),
+            CodePaneData {
+                window_id,
+                locator: PaneViewLocator {
+                    pane_group_id,
+                    pane_id,
+                },
+            },
+        );
+    }
+
     /// Returns the locator for a code pane that already has the given `LocalOrRemotePath`
     /// open in the given pane group. Works for both local and remote files.
     pub fn get_locator_for_location_in_tab(

@@ -82,7 +82,7 @@ pub struct SkillWatcher {
     /// (the skill-file layer). They are two maps only because their consumers ride
     /// two event routes — `RepositoryUpdate` here vs `SymlinkTargetUpdate` there.
     /// Collapsing those routes into one translation funnel lets a single map serve
-    /// both; tracked as warp-rbf #warp-35.
+    /// both; tracked as #warp-35.
     home_provider_canonical_to_originals: HashMap<PathBuf, HashSet<PathBuf>>,
     /// Maps canonical (resolved) SKILL.md paths → set of original symlink-based paths.
     /// Multiple symlinks can resolve to the same canonical file, so we track all of them.

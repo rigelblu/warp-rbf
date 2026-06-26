@@ -7,9 +7,10 @@ pub use header::PaneHeaderAction::CustomAction as PaneHeaderCustomAction;
 pub use header_content::{
     HeaderContent, HeaderRenderContext, StandardHeader, StandardHeaderOptions,
 };
+use pathfinder_geometry::rect::RectF;
 use warpui::elements::{
-    Border, Container, DropTarget, DropTargetData, Flex, MainAxisSize, ParentElement, SavePosition,
-    Shrinkable,
+    Align, Border, Container, DropTarget, DropTargetData, Flex, MainAxisSize, ParentElement,
+    Percentage, Rect, SavePosition, Shrinkable, Stack,
 };
 use warpui::keymap::EditableBinding;
 use warpui::presenter::ChildView;
@@ -45,18 +46,31 @@ pub fn init(app: &mut AppContext) {
 
 pub enum PaneViewEvent {
     MovePaneWithinPaneGroup {
+        origin: ActionOrigin,
         target_id: PaneId,
         direction: Direction,
+        group_editors: bool,
     },
     DroppedOnTabBar {
         origin: ActionOrigin,
+    },
+    DroppedWithinPaneGroup {
+        origin: ActionOrigin,
+        target_id: PaneId,
+        group_editors: bool,
     },
     DraggedOntoTabBar {
         origin: ActionOrigin,
         tab_hover_index: TabBarHoverIndex,
         hidden_pane_preview_direction: Direction,
     },
-    PaneDraggedOutsideTabBarOrPaneGroup,
+    PaneDraggedOutsideTabBarOrPaneGroup {
+        origin: ActionOrigin,
+        drag_position: RectF,
+    },
+    PaneDroppedOutsideTabBarOrPaneGroup {
+        origin: ActionOrigin,
+    },
     PaneDragEnded,
     PaneHeaderClicked,
 }
@@ -115,6 +129,13 @@ impl<P: BackingView> PaneView<P> {
                 ctx.notify();
             }
         });
+
+        // warp-44: re-render when the editor-tab split hint changes, so this pane can show/hide the
+        // "release to split here" accent (the shared model names the current ungroup destination).
+        ctx.subscribe_to_model(
+            &crate::pane_group::EditorTabSplitHintModel::handle(ctx),
+            |_, _, _event, ctx| ctx.notify(),
+        );
 
         Self {
             pane_id,
@@ -286,18 +307,33 @@ impl<P: BackingView> PaneView<P> {
                 }
             }
             header::Event::MovePaneWithinPaneGroup {
+                origin,
                 target_id,
                 direction,
+                group_editors,
             } => {
-                self.is_being_dragged = true;
+                if matches!(origin, ActionOrigin::Pane) {
+                    self.is_being_dragged = true;
+                }
                 ctx.emit(PaneViewEvent::MovePaneWithinPaneGroup {
+                    origin: *origin,
                     target_id: *target_id,
                     direction: *direction,
+                    group_editors: *group_editors,
                 });
                 ctx.notify();
             }
-            header::Event::PaneDroppedWithinPaneGroup => {
+            header::Event::DroppedWithinPaneGroup {
+                origin,
+                target_id,
+                group_editors,
+            } => {
                 ctx.emit(PaneViewEvent::PaneDragEnded);
+                ctx.emit(PaneViewEvent::DroppedWithinPaneGroup {
+                    origin: *origin,
+                    target_id: *target_id,
+                    group_editors: *group_editors,
+                });
                 self.is_being_dragged = false;
                 ctx.notify();
             }
@@ -327,20 +363,60 @@ impl<P: BackingView> PaneView<P> {
                 });
                 ctx.notify();
             }
-            header::Event::PaneDraggedOutsideTabBarOrPaneGroup => {
-                self.is_being_dragged = true;
-                ctx.emit(PaneViewEvent::PaneDraggedOutsideTabBarOrPaneGroup);
+            header::Event::PaneDraggedOutsideTabBarOrPaneGroup {
+                origin,
+                drag_position,
+            } => {
+                if matches!(origin, ActionOrigin::Pane) {
+                    self.is_being_dragged = true;
+                }
+                ctx.emit(PaneViewEvent::PaneDraggedOutsideTabBarOrPaneGroup {
+                    origin: *origin,
+                    drag_position: *drag_position,
+                });
                 ctx.notify();
             }
-            header::Event::PaneDroppedOutsideofTabBarOrPaneGroup => {
-                ctx.emit(PaneViewEvent::PaneDragEnded);
-                self.is_being_dragged = false;
+            header::Event::PaneDroppedOutsideofTabBarOrPaneGroup { origin } => {
+                ctx.emit(PaneViewEvent::PaneDroppedOutsideTabBarOrPaneGroup { origin: *origin });
+                if matches!(origin, ActionOrigin::Pane) {
+                    self.is_being_dragged = false;
+                }
                 ctx.notify();
             }
             header::Event::OverlayClosed => {
                 self.child(ctx)
                     .update(ctx, |child, ctx| child.focus_contents(ctx));
             }
+        }
+    }
+
+    fn render_editor_tab_split_hint(
+        direction: Direction,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
+        let accent = appearance.theme().accent();
+        let wash = accent.with_opacity(18);
+        let edge = accent.with_opacity(92);
+
+        let region = || {
+            Container::new(Rect::new().with_background_color(wash.into()).finish())
+                .with_border(Border::all(1.).with_border_fill(edge))
+                .finish()
+        };
+
+        match direction {
+            Direction::Left => Align::new(Percentage::width(0.5, region()).finish())
+                .left()
+                .finish(),
+            Direction::Right => Align::new(Percentage::width(0.5, region()).finish())
+                .right()
+                .finish(),
+            Direction::Up => Align::new(Percentage::height(0.5, region()).finish())
+                .top_left()
+                .finish(),
+            Direction::Down => Align::new(Percentage::height(0.5, region()).finish())
+                .bottom_left()
+                .finish(),
         }
     }
 
@@ -352,6 +428,12 @@ impl<P: BackingView> PaneView<P> {
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub struct PaneDropTargetData {
     id: PaneId,
+}
+
+impl PaneDropTargetData {
+    pub fn id(&self) -> PaneId {
+        self.id
+    }
 }
 
 impl<P: BackingView> View for PaneView<P> {
@@ -393,8 +475,14 @@ impl<P: BackingView> View for PaneView<P> {
         // Add the underlying pane view.
         column.add_child(Shrinkable::new(1., ChildView::new(&active_child).finish()).finish());
 
+        let hint = crate::pane_group::EditorTabSplitHintModel::as_ref(app).target();
+        let is_editor_tab_split_target = hint.is_some_and(|hint| hint.pane == self.pane_id);
+
         let mut container = Container::new(column.finish());
-        if pane_configuration.show_accent_border {
+        // warp-44: while an editor tab is being dragged, the shared hint model names the pane the
+        // tab would split a new sibling next to. Outline that destination pane so the user sees
+        // where releasing will land it.
+        if pane_configuration.show_accent_border || is_editor_tab_split_target {
             let border = Border::all(2.).with_border_fill(appearance.theme().accent());
             container = container.with_border(border);
         }
@@ -418,8 +506,22 @@ impl<P: BackingView> View for PaneView<P> {
             container = container.with_foreground_overlay(appearance.theme().surface_2())
         }
 
+        let container = if let Some(hint) = hint.filter(|hint| hint.pane == self.pane_id) {
+            // warp-44: render-only directional hint for the future sibling pane. This must not
+            // mutate pane tree state or move the dragged tab; it only paints where drop will split.
+            Stack::new()
+                .with_child(container.finish())
+                .with_child(Self::render_editor_tab_split_hint(
+                    hint.direction,
+                    appearance,
+                ))
+                .finish()
+        } else {
+            container.finish()
+        };
+
         SavePosition::new(
-            DropTarget::new(container.finish(), PaneDropTargetData { id: self.pane_id }).finish(),
+            DropTarget::new(container, PaneDropTargetData { id: self.pane_id }).finish(),
             &self.pane_id.position_id(),
         )
         .finish()

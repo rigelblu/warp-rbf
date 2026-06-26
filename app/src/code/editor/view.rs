@@ -55,7 +55,6 @@ use warpui::{
 
 use crate::appearance::Appearance;
 use crate::code::buffer_location::LocalOrRemotePath;
-use crate::code::editor::EditorReviewComment;
 use crate::code::editor::comment_editor::{CommentEditor, CommentEditorEvent};
 use crate::code::editor::comments::PendingComment;
 use crate::code::editor::diff::DiffStatus;
@@ -71,6 +70,7 @@ use crate::code::editor::model::{
 };
 use crate::code::editor::nav_bar::{NavBar, NavBarBehavior, NavBarEvent};
 use crate::code::editor::scroll::{ScrollPosition, ScrollTrigger, ScrollWheelBehavior};
+use crate::code::editor::EditorReviewComment;
 use crate::code::{
     DiffResult, NoopCommentEditorProvider, NoopFindReferencesCardProvider,
     ShowCommentEditorProvider, ShowFindReferencesCardProvider,

@@ -183,7 +183,7 @@ trait FindPaneByDirection {
     ) -> FindPaneByDirectionResult;
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
     Left,
     Right,

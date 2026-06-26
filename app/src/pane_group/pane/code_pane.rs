@@ -182,14 +182,16 @@ impl PaneContent for CodePane {
         ctx.unsubscribe_to_view(&file_view);
         ctx.unsubscribe_to_view(&self.view);
 
-        // Deregister from CodeManager for both HiddenForClose and Closed cases
-        // This ensures files can be opened elsewhere even during the undo grace period
-        if matches!(detach_type, DetachType::HiddenForClose | DetachType::Closed) {
-            let source = self.file_view(ctx).as_ref(ctx).source().clone();
-            CodeManager::handle(ctx).update(ctx, |manager, _ctx| {
+        let pane_id = self.id();
+        let source = self.file_view(ctx).as_ref(ctx).source().clone();
+        CodeManager::handle(ctx).update(ctx, |manager, _ctx| match detach_type {
+            DetachType::HiddenForClose | DetachType::Closed => {
                 manager.deregister_pane(&source);
-            });
-        }
+            }
+            DetachType::Moved => {
+                manager.deregister_pane_if_matches(&source, pane_id);
+            }
+        });
 
         // Only cleanup tabs when the pane is actually being destroyed (not during undo grace period)
         // This preserves the tab state so it can be properly restored via undo-close
