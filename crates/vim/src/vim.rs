@@ -590,6 +590,8 @@ pub enum VimEventType {
     GotoDefinition,
     FindReferences,
     ShowHover,
+    /// Toggle code-editor line-number mode. Triggered by `gn`.
+    ToggleLineNumberMode,
     /// Center the current line vertically in the viewport. Triggered by `zz`.
     CenterCursorVertically,
     /// Move cursor and scroll viewport down by half a page. Triggered by `<C-d>`.
@@ -654,6 +656,7 @@ impl VimEventType {
             | VimEventType::GotoDefinition
             | VimEventType::FindReferences
             | VimEventType::ShowHover
+            | VimEventType::ToggleLineNumberMode
             | VimEventType::CenterCursorVertically
             | VimEventType::ScrollHalfPageDown
             | VimEventType::ScrollHalfPageUp => None,
@@ -1076,6 +1079,7 @@ impl VimFSA {
                 'g' => VimEventType::Navigate(VimMotion::JumpToFirstLine),
                 'd' => VimEventType::GotoDefinition,
                 'h' => VimEventType::ShowHover,
+                'n' => VimEventType::ToggleLineNumberMode,
                 'r' => VimEventType::FindReferences,
                 // For two-character operations (g~, gu, gU, gc),
                 // replace the existing pending action, the generic G,
@@ -1934,6 +1938,7 @@ where
             VimEventType::GotoDefinition => self.goto_definition(ctx),
             VimEventType::FindReferences => self.find_references(ctx),
             VimEventType::ShowHover => self.show_hover(ctx),
+            VimEventType::ToggleLineNumberMode => self.toggle_line_number_mode(ctx),
             VimEventType::CenterCursorVertically => self.center_cursor_vertically(ctx),
             VimEventType::ScrollHalfPageDown => self.scroll_half_page_down(event.count, ctx),
             VimEventType::ScrollHalfPageUp => self.scroll_half_page_up(event.count, ctx),
@@ -2055,6 +2060,8 @@ pub trait VimHandler {
     fn find_references(&mut self, _ctx: &mut ViewContext<Self>) {}
     /// Show hover information for the symbol under cursor (gh).
     fn show_hover(&mut self, _ctx: &mut ViewContext<Self>) {}
+    /// Toggle code-editor line-number mode (gn).
+    fn toggle_line_number_mode(&mut self, _ctx: &mut ViewContext<Self>) {}
     /// Center the current line vertically in the viewport (zz).
     fn center_cursor_vertically(&mut self, _ctx: &mut ViewContext<Self>) {}
     /// Move the cursor down `count` half-pages and scroll the viewport (`<C-d>`).

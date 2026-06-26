@@ -109,8 +109,8 @@ use crate::server::telemetry::TelemetryEvent;
 #[cfg(feature = "voice_input")]
 use crate::settings::AISettingsChangedEvent;
 use crate::settings::{
-    AISettings, AppEditorSettings, AppEditorSettingsChangedEvent, CursorBlink, CursorDisplayType,
-    InputSettings, SelectionSettings,
+    AISettings, AppEditorSettings, AppEditorSettingsChangedEvent, CodeEditorLineNumberMode,
+    CursorBlink, CursorDisplayType, InputSettings, SelectionSettings,
 };
 use crate::settings_view::flags;
 use crate::suggestions::ignored_suggestions_model::{IgnoredSuggestionsModel, SuggestionType};
@@ -130,7 +130,7 @@ use crate::view_components::DismissibleToast;
 use crate::view_components::FeaturePopup;
 use crate::vim_registers::{RegisterContent, VimRegisters};
 use crate::workspace::{ToastStack, Workspace};
-use crate::BlocklistAIHistoryModel;
+use crate::{report_if_error, BlocklistAIHistoryModel};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const DEFAULT_TAB_SIZE: usize = 4;
@@ -2433,6 +2433,19 @@ impl VimHandler for EditorView {
 
     fn ex_command(&mut self, ctx: &mut ViewContext<Self>) {
         ctx.emit(Event::ExCommand);
+    }
+
+    fn toggle_line_numbers(&mut self, ctx: &mut ViewContext<Self>) {
+        AppEditorSettings::handle(ctx).update(ctx, |editor_settings, ctx| {
+            let next_mode = match *editor_settings.code_editor_line_number_mode.value() {
+                CodeEditorLineNumberMode::Absolute => CodeEditorLineNumberMode::Relative,
+                CodeEditorLineNumberMode::Relative => CodeEditorLineNumberMode::Absolute,
+            };
+            report_if_error!(editor_settings
+                .code_editor_line_number_mode
+                .set_value(next_mode, ctx));
+            ctx.notify();
+        });
     }
 
     fn jump_to_first_line(&mut self, ctx: &mut ViewContext<Self>) {

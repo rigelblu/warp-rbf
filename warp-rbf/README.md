@@ -47,7 +47,10 @@ This is my ~~fork~~ flavour of [Warp](https://github.com/warpdotdev/Warp), simil
 **See Warp and RBF version numbers** (macOS)
 — Know exactly which Warp build and RBF feature set is running before trusting a dogfood result. Settings -> About renders separate rows for Warp and Warp RBF with copy buttons.
 
-## 🟠⋯ Settings, Themes, And Data
+**Toggle editor line-number mode from Vim**
+— Toggle the code editor's line-number mode between absolute and relative with the Vim shortcut `gn` to easily calculate vertical motions.
+
+## 🟠⋯ Settings, Themes, and Data
 Copy your regular warp configs
 ```
 cp -a $HOME/.warp $HOME/.warp-oss
