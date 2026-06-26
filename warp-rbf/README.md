@@ -76,7 +76,7 @@ Compiles and launches WarpOss from source — nothing is installed.
 ## 🟠⋯ Install as Local App
 Builds an optimized, self-signed `WarpOss.app`. Run from the repository root:
 ```sh
-./script/bundle -c oss
+./script/bundle -c oss --install
 ```
 - The `oss` channel builds the **`release-lto`** profile (opt-level 3 + thin LTO, assertions off) — production performance.
   - This, not `./script/run`, is the build to daily-drive.
