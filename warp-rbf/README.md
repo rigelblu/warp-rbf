@@ -19,30 +19,30 @@ This is my ~~fork~~ flavour of [Warp](https://github.com/warpdotdev/Warp), simil
 — WarpOOSS self-signs with a stable identity, so a macOS data-access grant survives rebuilds instead of re-prompting 7–20× every launch.
 
 **Enable vertical tabs an groups**
-— tab groups (macOS), the vertical tab layout, and directory-colored tabs.
+— Tab groups (macOS), the vertical tab layout, and directory-colored tabs.
 
 **Live skill hot-reload**
-— add, rename, or remove skills in your home or project skills dirs and they reload without restarting Warp.
+— Add, rename, or remove skills in your home or project skills dirs and they reload without restarting Warp.
 
 **Speak Selection reads the selection** (macOS)
 — Option+Esc on selected terminal text reads what you selected, not from the top of the pane.
 
 **Collapse a pane to a rail**
-— tuck a pane you're not using to a thin edge rail to reclaim its space without closing it.
+— Tuck a pane you're not using to a thin edge rail to reclaim its space without closing it.
 - `meta-shift-hjkl` rails the bordering pane · `meta-shift-E` expands the focused pane · click the rail or the opposite key restores
 
 **Colored tabs contrast improvements**
-— tell inactive tab colors apart, and see which colored tab is active at a glance.
+- Tell inactive tab colors apart, and see which colored tab is active at a glance.
 
 **Name a window** (macOS)
-— give a window a persistent name that shows in the title bar, the Window menu, and Mission Control.
-- `/name-window <name>`
-- `/name-window --clear`
+- Give a window a persistent name that shows in the title bar, the Window menu, and Mission Control.
+  - `/name-window <name>`
+  - `/name-window --clear`
 
 **Rename tab color slots**
 — label the six tab colors for what they mean in your workflow (e.g. "default" → `INACTIVE`, "blue"  → `PRIMARY`) instead of memorizing colors.
-- `/rename-tab-color <color> <label>`
-- `/rename-tab-color <color> --clear`
+  - `/rename-tab-color <color> <label>`
+  - `/rename-tab-color <color> --clear`
 
 ## 🟠⋯ Settings, Themes, And Data
 Copy your regular warp configs
