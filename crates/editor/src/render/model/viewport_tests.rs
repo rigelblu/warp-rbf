@@ -156,6 +156,20 @@ fn test_viewport_width_change() {
 }
 
 #[test]
+fn test_viewport_max_width_caps_layout_width() {
+    let state = ViewportState::new(100.0.into_pixels(), 500.0.into_pixels());
+
+    let size_info = state.viewport_size(
+        SizeConstraint::new(vec2f(20., 100.), vec2f(80., 500.)),
+        vec2f(0., 0.),
+        Some(60.0.into_pixels()),
+    );
+
+    assert!(size_info.needs_layout);
+    assert_eq!(size_info.viewport_size, vec2f(60., 500.));
+}
+
+#[test]
 fn test_viewport_height_change() {
     let content_height = 300.0.into_pixels();
     let content_width = 100.0.into_pixels();

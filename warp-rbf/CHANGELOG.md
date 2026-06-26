@@ -6,6 +6,12 @@ title: Changelog
 
 ---
 
+# 🔵⋯ v0.10.0 (2026-06-30)
+## 🟠⋯ Added
+- 2026-06-30 - feat (user need) | toggle the code editor's soft wrap state on/off with the Vim shortcut 'zw' to easily inspect long lines (#warp-41)
+
+---
+
 # 🔵⋯ v0.9.0 (2026-06-30)
 ## 🟠⋯ Added
 - 2026-06-30 - feat (user need) | toggle the code editor's line-number mode between absolute and relative with the Vim shortcut 'gn' to easily calculate vertical motions (#warp-40)

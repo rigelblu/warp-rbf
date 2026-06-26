@@ -2448,6 +2448,11 @@ impl VimHandler for EditorView {
         });
     }
 
+    fn toggle_soft_wrap(&mut self, ctx: &mut ViewContext<Self>) {
+        self.soft_wrap = !self.soft_wrap;
+        ctx.notify();
+    }
+
     fn jump_to_first_line(&mut self, ctx: &mut ViewContext<Self>) {
         self.cursor_top(ctx);
     }

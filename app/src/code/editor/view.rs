@@ -38,9 +38,9 @@ use warpui::elements::new_scrollable::{
     AxisConfiguration, DualAxisConfig, NewScrollableElement, ScrollableAppearance,
 };
 use warpui::elements::{
-    ChildAnchor, ChildView, Dismiss, Fill, Flex, Margin, MouseStateHandle, NewScrollable,
-    OffsetPositioning, Padding, ParentAnchor, ParentElement, ParentOffsetBounds, ScrollStateHandle,
-    Shrinkable, Stack,
+    ChildAnchor, ChildView, Container, Dismiss, Fill, Flex, Margin, MouseStateHandle,
+    NewScrollable, OffsetPositioning, Padding, ParentAnchor, ParentElement, ParentOffsetBounds,
+    ScrollStateHandle, Shrinkable, Stack,
 };
 use warpui::event::ModifiersState;
 use warpui::keymap::Keystroke;
@@ -54,6 +54,7 @@ use warpui::{
 };
 
 use crate::appearance::Appearance;
+use crate::code::buffer_location::LocalOrRemotePath;
 use crate::code::editor::comment_editor::{CommentEditor, CommentEditorEvent};
 use crate::code::editor::comments::PendingComment;
 use crate::code::editor::diff::DiffStatus;
@@ -78,6 +79,7 @@ use crate::code_review::comments::{CommentId, CommentOrigin};
 use crate::editor::InteractionState;
 use crate::features::FeatureFlag;
 use crate::notebooks::editor::rich_text_styles;
+use crate::report_if_error;
 use crate::settings::{AppEditorSettings, CodeEditorLineNumberMode, FontSettings};
 use crate::view_components::find::FindDirection;
 
@@ -256,6 +258,11 @@ impl CodeEditorRenderOptions {
     }
 }
 
+// Match the terminal cloud-mode input's outer pane gutter.
+const CODE_EDITOR_PANE_HORIZONTAL_PADDING: f32 = 16.;
+const CODE_EDITOR_PANE_TOP_PADDING: f32 = 0.;
+const CODE_EDITOR_PANE_BOTTOM_PADDING: f32 = 16.;
+
 pub struct CodeEditorView {
     pub model: ModelHandle<CodeEditorModel>,
     pub searcher: ModelHandle<Searcher>,
@@ -268,6 +275,7 @@ pub struct CodeEditorView {
     display_options: CodeEditorViewDisplayOptions,
     pending_scroll: Option<ScrollTrigger>,
     supports_vim_mode: bool,
+    soft_wrap: bool,
     vim_model: ModelHandle<VimModel>,
     // Track the most recent Vim search direction to determine how to cycle (n/N) thereafter.
     last_search_direction: Direction,
@@ -418,6 +426,7 @@ impl CodeEditorView {
             },
             pending_scroll: None,
             supports_vim_mode,
+            soft_wrap: true,
             vim_model,
             last_search_direction: Direction::Forward,
             active_comment_editor: comment_editor,
@@ -2072,6 +2081,54 @@ impl CodeEditorView {
         });
     }
 
+    pub(crate) fn set_code_editor_line_number_mode(
+        &mut self,
+        mode: CodeEditorLineNumberMode,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        AppEditorSettings::handle(ctx).update(ctx, |editor_settings, ctx| {
+            if *editor_settings.code_editor_line_number_mode.value() != mode {
+                report_if_error!(editor_settings
+                    .code_editor_line_number_mode
+                    .set_value(mode, ctx));
+            }
+            ctx.notify();
+        });
+    }
+
+    pub(crate) fn set_code_editor_line_numbers_visible(
+        &mut self,
+        show_line_numbers: bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self.display_options.show_line_numbers != show_line_numbers {
+            self.display_options.show_line_numbers = show_line_numbers;
+            ctx.notify();
+        }
+    }
+
+    pub(crate) fn toggle_code_editor_line_numbers_visible(&mut self, ctx: &mut ViewContext<Self>) {
+        self.set_code_editor_line_numbers_visible(!self.display_options.show_line_numbers, ctx);
+    }
+
+    pub(crate) fn set_code_editor_soft_wrap(
+        &mut self,
+        soft_wrap: bool,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self.soft_wrap != soft_wrap {
+            self.soft_wrap = soft_wrap;
+        }
+        self.model.update(ctx, |model, ctx| {
+            model.set_soft_wrap(soft_wrap, ctx);
+        });
+        ctx.notify();
+    }
+
+    pub(crate) fn toggle_code_editor_soft_wrap(&mut self, ctx: &mut ViewContext<Self>) {
+        self.set_code_editor_soft_wrap(!self.soft_wrap, ctx);
+    }
+
     fn delete_line_left(&self, ctx: &mut ViewContext<Self>) {
         self.model.update(ctx, |model, ctx| {
             model.delete_all_left(ctx);
@@ -2169,6 +2226,7 @@ impl View for CodeEditorView {
         };
 
         let line_number_config = self.line_number_config(app);
+        let show_line_numbers = line_number_config.is_some();
 
         let diff_status = if self.display_options.can_show_diff_ui {
             self.model.as_ref(app).diff_status(app)
@@ -2358,7 +2416,17 @@ impl View for CodeEditorView {
                 }
             }
         }
-        stack.finish()
+        let left_padding = if show_line_numbers {
+            0.
+        } else {
+            CODE_EDITOR_PANE_HORIZONTAL_PADDING
+        };
+        Container::new(stack.finish())
+            .with_padding_left(left_padding)
+            .with_padding_right(CODE_EDITOR_PANE_HORIZONTAL_PADDING)
+            .with_padding_top(CODE_EDITOR_PANE_TOP_PADDING)
+            .with_padding_bottom(CODE_EDITOR_PANE_BOTTOM_PADDING)
+            .finish()
     }
 
     fn on_focus(&mut self, focus_ctx: &FocusContext, ctx: &mut ViewContext<Self>) {

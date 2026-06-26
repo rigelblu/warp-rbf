@@ -357,7 +357,7 @@ impl CodeEditorModel {
 
         let render_state = ctx.add_model(|ctx| {
             RenderState::new(text_styles, lazy_layout, Some(hidden_lines.clone()), ctx)
-                .with_width_setting(WidthSetting::InfiniteWidth)
+                .with_width_setting(WidthSetting::FitViewport)
         });
         ctx.subscribe_to_model(&render_state, |me, _, event, ctx| {
             me.handle_render_state_model_event(event, ctx);
@@ -446,7 +446,9 @@ impl CodeEditorModel {
             RenderEvent::LayoutUpdated => {
                 ctx.emit(CodeEditorModelEvent::LayoutInvalidated);
             }
-            RenderEvent::NeedsResize => {}
+            RenderEvent::NeedsResize => {
+                self.rebuild_layout_and_refresh_diff(ctx);
+            }
         }
     }
 
@@ -1224,6 +1226,18 @@ impl CodeEditorModel {
                 self.refresh_diff_state(ctx);
             }
         }
+    }
+
+    pub fn set_soft_wrap(&mut self, soft_wrap: bool, ctx: &mut ModelContext<Self>) {
+        let width_setting = if soft_wrap {
+            WidthSetting::FitViewport
+        } else {
+            WidthSetting::InfiniteWidth
+        };
+
+        self.render_state.update(ctx, |render_state, ctx| {
+            render_state.set_width_setting(width_setting, ctx);
+        });
     }
 
     /// Rebuild layout and make sure the temporary blocks for diff state has the right styling + anchored
