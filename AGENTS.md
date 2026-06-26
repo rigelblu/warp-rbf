@@ -193,5 +193,5 @@ if FeatureFlag::YourNewFeature.is_enabled() {
 
 When adding/editing match statements, avoid using the wildcard _ when at all possible. Exhaustive matching is helpful for ensuring that all variants are handled, especially when adding new variants to enums in the future.
 
-# Read WARP-RBF
-Read and use @warp-rfb/AGENTS.md
+# Read RBF
+Read and use @rfb/AGENTS.md
