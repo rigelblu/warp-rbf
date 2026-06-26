@@ -323,7 +323,7 @@ impl ResourceCenterMainView {
             )
             .build()
             .on_click(move |ctx, _, _| {
-                ctx.dispatch_typed_action(WorkspaceAction::CopyVersion(version))
+                ctx.dispatch_typed_action(WorkspaceAction::CopyVersion(version.to_string()))
             })
             .finish();
 

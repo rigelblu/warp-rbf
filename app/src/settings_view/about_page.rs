@@ -45,6 +45,7 @@ impl View for AboutPageView {
 #[derive(Default)]
 struct AboutPageWidget {
     copy_version_button_mouse_state: MouseStateHandle,
+    copy_rbf_version_button_mouse_state: MouseStateHandle,
 }
 
 impl SettingsWidget for AboutPageWidget {
@@ -69,33 +70,22 @@ impl SettingsWidget for AboutPageWidget {
             "bundled/svg/warp-logo-with-dark-title.svg"
         };
 
-        let version = ChannelState::app_version().unwrap_or("v#.##.###");
+        let rbf_version = include_str!("../../../warp-rbf/RBF_VERSION").trim();
+        let rbf_version_text = format!("Warp RBF v{rbf_version}");
+        let (warp_version_label, warp_version_copy_text) = warp_version_text();
 
-        let version_text = ui_builder
-            .span(version.to_string())
-            .with_soft_wrap()
-            .build()
-            .with_margin_top(16.)
-            .finish();
-
-        let copy_version_icon = appearance
-            .ui_builder()
-            .copy_button(16., self.copy_version_button_mouse_state.clone())
-            .build()
-            .on_click(move |ctx, _, _| {
-                ctx.dispatch_typed_action(WorkspaceAction::CopyVersion(version));
-            })
-            .finish();
-
-        let version_row = Wrap::row()
-            .with_main_axis_alignment(MainAxisAlignment::Center)
-            .with_children([
-                version_text,
-                Container::new(copy_version_icon)
-                    .with_margin_top(16.)
-                    .with_padding_left(6.)
-                    .finish(),
-            ]);
+        let version_row = render_version_row(
+            warp_version_label,
+            warp_version_copy_text,
+            self.copy_version_button_mouse_state.clone(),
+            appearance,
+        );
+        let rbf_version_row = render_version_row(
+            rbf_version_text.clone(),
+            rbf_version_text,
+            self.copy_rbf_version_button_mouse_state.clone(),
+            appearance,
+        );
 
         Align::new(
             Flex::column()
@@ -113,6 +103,7 @@ impl SettingsWidget for AboutPageWidget {
                     .finish(),
                 )
                 .with_child(version_row.finish())
+                .with_child(rbf_version_row.finish())
                 .with_child(
                     ui_builder
                         .span("Copyright 2026 Warp")
@@ -124,6 +115,59 @@ impl SettingsWidget for AboutPageWidget {
         )
         .finish()
     }
+}
+
+fn warp_version_text() -> (String, String) {
+    if let Some(version) = ChannelState::app_version() {
+        return (format!("Warp {version}"), version.to_string());
+    }
+
+    if let Some(source_sha) = option_env!("WARP_BUILD_SOURCE_SHA").filter(|sha| !sha.is_empty()) {
+        let short_sha = &source_sha[..source_sha.len().min(12)];
+        return (
+            format!("Warp source {short_sha}"),
+            format!("Warp source {source_sha}"),
+        );
+    }
+
+    (
+        "Warp source unknown".to_string(),
+        "Warp source unknown".to_string(),
+    )
+}
+
+fn render_version_row(
+    label: String,
+    copy_text: String,
+    copy_button_mouse_state: MouseStateHandle,
+    appearance: &Appearance,
+) -> Wrap {
+    let ui_builder = appearance.ui_builder();
+
+    let version_text = ui_builder
+        .span(label)
+        .with_soft_wrap()
+        .build()
+        .with_margin_top(16.)
+        .finish();
+
+    let copy_version_icon = ui_builder
+        .copy_button(16., copy_button_mouse_state)
+        .build()
+        .on_click(move |ctx, _, _| {
+            ctx.dispatch_typed_action(WorkspaceAction::CopyVersion(copy_text.clone()));
+        })
+        .finish();
+
+    Wrap::row()
+        .with_main_axis_alignment(MainAxisAlignment::Center)
+        .with_children([
+            version_text,
+            Container::new(copy_version_icon)
+                .with_margin_top(16.)
+                .with_padding_left(6.)
+                .finish(),
+        ])
 }
 
 impl SettingsPageMeta for AboutPageView {

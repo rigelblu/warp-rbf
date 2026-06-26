@@ -24,8 +24,17 @@ fn main() -> Result<()> {
     }
 
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=../.git/HEAD");
+    println!("cargo:rerun-if-changed=../.git/refs");
+    println!("cargo:rerun-if-changed=../.git/packed-refs");
+    println!("cargo:rerun-if-changed=../.jj/working_copy/checkout");
+    println!("cargo:rerun-if-changed=../.jj/working_copy/tree_state");
     println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_OS");
     println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_FAMILY");
+
+    if let Some(sha) = build_source_sha() {
+        println!("cargo:rustc-env=WARP_BUILD_SOURCE_SHA={sha}");
+    }
 
     let target_os = env::var("CARGO_CFG_TARGET_OS")?;
     let target_family = env::var("CARGO_CFG_TARGET_FAMILY")?;
@@ -143,6 +152,44 @@ fn main() -> Result<()> {
     generate_channel_config_if_needed(&target_family, &target_os);
 
     Ok(())
+}
+
+fn build_source_sha() -> Option<String> {
+    jj_commit_id().or_else(git_commit_id)
+}
+
+fn jj_commit_id() -> Option<String> {
+    Command::new("jj")
+        .args([
+            "--no-pager",
+            "log",
+            "--no-graph",
+            "-r",
+            "@",
+            "-T",
+            "commit_id",
+        ])
+        .current_dir("..")
+        .output()
+        .ok()
+        .and_then(|output| output.status.success().then_some(output.stdout))
+        .and_then(trim_command_output)
+}
+
+fn git_commit_id() -> Option<String> {
+    Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir("..")
+        .output()
+        .ok()
+        .and_then(|output| output.status.success().then_some(output.stdout))
+        .and_then(trim_command_output)
+}
+
+fn trim_command_output(output: Vec<u8>) -> Option<String> {
+    let value = String::from_utf8(output).ok()?;
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 /// If `warp-channel-config` is available on PATH and the `release_bundle` feature is enabled,
