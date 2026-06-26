@@ -108,6 +108,7 @@ SELFSIGN=false
 EXPLICIT_NOSIGN=false
 OPEN_AFTER_BUNDLE=false
 READ_PASSWORDS_FROM_ENV=false
+INSTALL_TO_APPLICATIONS=false
 
 PARAMS=""
 while (( "$#" )); do
@@ -184,6 +185,11 @@ while (( "$#" )); do
     # Open the parent directory after bundling completes.
     -o|--open)
       OPEN_AFTER_BUNDLE=true
+      shift
+      ;;
+    # Install the built app directly to /Applications
+    -i|--install)
+      INSTALL_TO_APPLICATIONS=true
       shift
       ;;
     # Specify the release channel (local, dev, preview, stable, oss)
@@ -855,6 +861,13 @@ if [[ "$ARTIFACT" = app ]]; then
   echo "Copying dmg and app to $OUT_DIR"
   cp -R "$BUNDLE_DIR/$WARP_APP_NAME.app" "$OUT_DIR"
   cp "$DMG_DIR/$DMG_NAME" "$OUT_DIR/$FINAL_DMG_NAME"
+
+  if [[ $INSTALL_TO_APPLICATIONS = true ]]; then
+    echo "Installing $WARP_APP_NAME.app to /Applications..."
+    rm -rf "/Applications/$WARP_APP_NAME.app"
+    cp -R "$OUT_DIR/$WARP_APP_NAME.app" "/Applications/"
+    echo "Successfully installed to /Applications/$WARP_APP_NAME.app"
+  fi
 fi
 
 # If this is being run within a GitHub action, set an output variable with the
