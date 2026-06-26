@@ -29,6 +29,49 @@ fn add_editor_vim_normal_mode(buffer_content: &str, app: &mut App) -> ViewHandle
     editor
 }
 
+fn code_editor_line_number_mode(
+    editor: &ViewHandle<EditorView>,
+    app: &App,
+) -> CodeEditorLineNumberMode {
+    editor.read(app, |_, ctx| {
+        *AppEditorSettings::as_ref(ctx)
+            .code_editor_line_number_mode
+            .value()
+    })
+}
+
+#[test]
+fn test_vim_toggle_code_editor_line_number_mode() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let editor = add_editor_vim_normal_mode("first\nsecond\nthird", &mut app);
+
+        assert_eq!(
+            code_editor_line_number_mode(&editor, &app),
+            CodeEditorLineNumberMode::Absolute
+        );
+
+        editor.update(&mut app, |view, ctx| {
+            view.vim_user_insert("gn", ctx);
+        });
+
+        assert_eq!(
+            code_editor_line_number_mode(&editor, &app),
+            CodeEditorLineNumberMode::Relative
+        );
+
+        editor.update(&mut app, |view, ctx| {
+            view.vim_user_insert("gn", ctx);
+        });
+
+        assert_eq!(
+            code_editor_line_number_mode(&editor, &app),
+            CodeEditorLineNumberMode::Absolute
+        );
+    });
+}
+
 #[test]
 fn test_vim_ctrl_c_normal() {
     App::test((), |mut app| async move {

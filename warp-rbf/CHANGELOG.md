@@ -6,6 +6,12 @@ title: Changelog
 
 ---
 
+# 🔵⋯ v0.9.0 (2026-06-30)
+## 🟠⋯ Added
+- 2026-06-30 - feat (user need) | toggle the code editor's line-number mode between absolute and relative with the Vim shortcut 'gn' to easily calculate vertical motions (#warp-40)
+
+---
+
 # 🔵⋯ v0.8.0 (2026-06-30)
 ## 🟠⋯ Added
 - 2026-06-29 - feat (user need) | know exactly which Warp build and RBF feature set is running before trusting a dogfood result (#warp-47)
