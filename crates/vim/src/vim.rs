@@ -592,6 +592,8 @@ pub enum VimEventType {
     ShowHover,
     /// Toggle code-editor line-number mode. Triggered by `gn`.
     ToggleLineNumberMode,
+    /// Yank code-editor file location. Triggered by `gy`.
+    YankFileLocation,
     /// Toggle code-editor soft wrapping. Triggered by `zw`.
     ToggleSoftWrap,
     /// Center the current line vertically in the viewport. Triggered by `zz`.
@@ -659,6 +661,7 @@ impl VimEventType {
             | VimEventType::FindReferences
             | VimEventType::ShowHover
             | VimEventType::ToggleLineNumberMode
+            | VimEventType::YankFileLocation
             | VimEventType::ToggleSoftWrap
             | VimEventType::CenterCursorVertically
             | VimEventType::ScrollHalfPageDown
@@ -1085,6 +1088,7 @@ impl VimFSA {
                 'h' => VimEventType::ShowHover,
                 'n' => VimEventType::ToggleLineNumberMode,
                 'r' => VimEventType::FindReferences,
+                'y' => VimEventType::YankFileLocation,
                 // For two-character operations (g~, gu, gU, gc),
                 // replace the existing pending action, the generic G,
                 // with a more specific pending action.
@@ -1566,6 +1570,7 @@ impl VimFSA {
                     word_type: WordType::from(c),
                 })),
                 'g' => VimEventType::Navigate(VimMotion::JumpToFirstLine),
+                'y' => VimEventType::YankFileLocation,
                 'c' => {
                     let motion_type = match self.mode {
                         VimMode::Visual(mt) => mt,
@@ -1943,6 +1948,7 @@ where
             VimEventType::FindReferences => self.find_references(ctx),
             VimEventType::ShowHover => self.show_hover(ctx),
             VimEventType::ToggleLineNumberMode => self.toggle_line_number_mode(ctx),
+            VimEventType::YankFileLocation => self.yank_file_location(ctx),
             VimEventType::ToggleSoftWrap => self.toggle_soft_wrap(ctx),
             VimEventType::CenterCursorVertically => self.center_cursor_vertically(ctx),
             VimEventType::ScrollHalfPageDown => self.scroll_half_page_down(event.count, ctx),
@@ -2067,6 +2073,8 @@ pub trait VimHandler {
     fn show_hover(&mut self, _ctx: &mut ViewContext<Self>) {}
     /// Toggle code-editor line-number mode (gn).
     fn toggle_line_number_mode(&mut self, _ctx: &mut ViewContext<Self>) {}
+    /// Yank the code-editor file location to the clipboard (gy).
+    fn yank_file_location(&mut self, _ctx: &mut ViewContext<Self>) {}
     /// Toggle code-editor soft wrapping (zw).
     fn toggle_soft_wrap(&mut self, _ctx: &mut ViewContext<Self>) {}
     /// Center the current line vertically in the viewport (zz).

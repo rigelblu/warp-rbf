@@ -53,6 +53,9 @@ This is my ~~fork~~ flavour of [Warp](https://github.com/warpdotdev/Warp), simil
 **Toggle editor wrapping from Vim**
 — Toggle the code editor's soft wrap state on/off with the Vim shortcut `zw` to easily inspect long lines.
 
+**Yank editor file location from Vim**
+— Copy the repository-relative file path and line number/range with the Vim shortcut `cy` in normal mode, or `gy` in visual-line mode, to easily share code locations.
+
 ## 🟠⋯ Settings, Themes, and Data
 Copy your regular warp configs
 ```

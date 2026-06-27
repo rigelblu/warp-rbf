@@ -1,3 +1,4 @@
+use repo_metadata::repositories::DetectedRepositories;
 use vim::vim::{
     BracketChar, CharacterMotion, Direction, FindCharMotion, FirstNonWhitespaceMotion,
     InsertPosition, LineMotion, ModeTransition, MotionType, TextObjectType, VimHandler, VimMode,
@@ -5,16 +6,19 @@ use vim::vim::{
 };
 use warp_editor::content::buffer::{
     AutoScrollBehavior, BufferEditAction, EditOrigin, SelectionOffsets, ToBufferCharOffset as _,
-    VimInsertPoint,
+    ToBufferPoint as _, VimInsertPoint,
 };
 use warp_editor::model::{CoreEditorModel, PlainTextEditorModel};
 use warp_editor::render::model::AutoScrollMode;
 use warp_editor::selection::{TextDirection, TextUnit};
+use warp_util::standardized_path::StandardizedPath;
+use warpui::clipboard::ClipboardContent;
 use warpui::text::point::Point;
 use warpui::units::IntoPixels;
 use warpui::{SingletonEntity, ViewContext};
 
 use super::{CodeEditorEvent, CodeEditorView};
+use crate::code::buffer_location::LocalOrRemotePath;
 use crate::code::editor::find::view::Event as FindViewEvent;
 use crate::code::editor::model::{CaseTransform, CodeEditorModel, LineBound};
 use crate::view_components::find::FindDirection;
@@ -503,6 +507,71 @@ impl VimHandler for CodeEditorView {
     }
 
     fn ex_command(&mut self, _ctx: &mut ViewContext<Self>) {}
+
+    fn yank_file_location(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(file_location) = self.file_location().cloned() else {
+            return;
+        };
+
+        let path = DetectedRepositories::as_ref(ctx)
+            .get_root_for_path(&file_location)
+            .and_then(|repo_root| {
+                let file_location_for_strip = match &file_location {
+                    LocalOrRemotePath::Local(path) => StandardizedPath::from_local_canonicalized(
+                        path,
+                    )
+                    .ok()
+                    .and_then(|path| path.to_local_path())
+                    .map(LocalOrRemotePath::Local)
+                    .unwrap_or_else(|| file_location.clone()),
+                    LocalOrRemotePath::Remote(_) => file_location.clone(),
+                };
+                repo_root.strip_repo_prefix(&file_location_for_strip)
+            })
+            .unwrap_or_else(|| file_location.display_path());
+        let is_visual_linewise = self.vim_mode(ctx) == Some(VimMode::Visual(MotionType::Linewise));
+
+        let line_suffix = self.model.update(ctx, |model, ctx| {
+            if is_visual_linewise {
+                let existing_selections = model.selections(ctx).clone();
+                model.vim_visual_selection_range(MotionType::Linewise, false, ctx);
+
+                let suffix = {
+                    let buffer = model.buffer().as_ref(ctx);
+                    let selection_model = model.buffer_selection_model().as_ref(ctx);
+                    let selection_offsets = selection_model.selection_offsets();
+                    let selection = *selection_offsets.first();
+                    let start = selection
+                        .head
+                        .min(selection.tail)
+                        .to_buffer_point(buffer)
+                        .row
+                        .max(1);
+                    let end = selection
+                        .head
+                        .max(selection.tail)
+                        .to_buffer_point(buffer)
+                        .row
+                        .max(1);
+                    format!("{start}-{end}")
+                };
+
+                model.vim_set_selections(existing_selections, AutoScrollBehavior::None, ctx);
+                suffix
+            } else {
+                let buffer = model.buffer().as_ref(ctx);
+                let selection_model = model.buffer_selection_model().as_ref(ctx);
+                let selection_offsets = selection_model.selection_offsets();
+                let selection = *selection_offsets.first();
+                let line = selection.head.to_buffer_point(buffer).row.max(1);
+                line.to_string()
+            }
+        });
+
+        ctx.clipboard().write(ClipboardContent::plain_text(format!(
+            "{path}:{line_suffix}"
+        )));
+    }
 
     fn visual_operator(
         &mut self,

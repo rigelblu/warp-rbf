@@ -1,6 +1,9 @@
+use std::fs;
 use std::sync::Arc;
 
 use pathfinder_geometry::vector::Vector2F;
+use repo_metadata::repositories::DetectedRepositories;
+use tempfile::tempdir;
 use unindent::Unindent;
 use vim::vim::{MotionType, VimMode};
 use warp_core::features::FeatureFlag;
@@ -10,7 +13,10 @@ use warp_editor::content::buffer::{InitialBufferState, ToBufferCharOffset, ToBuf
 use warp_editor::model::CoreEditorModel;
 use warp_editor::render::element::VerticalExpansionBehavior;
 use warp_editor::render::model::viewport::SizeInfo;
+use warp_util::local_or_remote_path::LocalOrRemotePath;
+use warp_util::standardized_path::StandardizedPath;
 use warp_util::user_input::UserInput;
+use warpui::clipboard::ClipboardContent;
 use warpui::keymap::Keystroke;
 use warpui::platform::WindowStyle;
 use warpui::text::point::Point;
@@ -27,8 +33,8 @@ use crate::settings::AppEditorSettings;
 use crate::settings_view::keybindings::KeybindingChangedNotifier;
 use crate::test_util::settings::initialize_settings_for_tests;
 use crate::vim_registers::VimRegisters;
-use crate::workspace::sync_inputs::SyncedInputState;
 use crate::workspace::ActiveSession;
+use crate::workspace::sync_inputs::SyncedInputState;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 
 // Await render/layout completion for a CodeEditorView in tests.
@@ -49,6 +55,7 @@ fn initialize_code_editor_app(app: &mut App) {
     app.add_singleton_model(|_| Appearance::mock());
     app.add_singleton_model(|_| SyncedInputState::mock());
     app.add_singleton_model(|_| VimRegisters::new());
+    app.add_singleton_model(|_| DetectedRepositories::default());
     app.add_singleton_model(|_| KeybindingChangedNotifier::mock());
     #[cfg(feature = "voice_input")]
     app.add_singleton_model(voice_input::VoiceInput::new);
@@ -112,6 +119,33 @@ fn vim_user_insert(editor: &ViewHandle<CodeEditorView>, text: &str, app: &mut Ap
 /// Helper function to get buffer text from CodeEditorView.
 fn buffer_text(editor: &ViewHandle<CodeEditorView>, app: &App) -> String {
     editor.read(app, |view, ctx| view.text(ctx).into_string())
+}
+
+fn clipboard_text(app: &mut App) -> String {
+    app.update(|ctx| ctx.clipboard().read().plain_text)
+}
+
+fn write_clipboard(text: &str, app: &mut App) {
+    app.update(|ctx| {
+        ctx.clipboard()
+            .write(ClipboardContent::plain_text(text.to_owned()));
+    });
+}
+
+fn set_file_location(
+    editor: &ViewHandle<CodeEditorView>,
+    location: LocalOrRemotePath,
+    app: &mut App,
+) {
+    editor.update(app, |view, _| view.set_file_location(Some(location)));
+}
+
+fn register_test_repo_root(path: &std::path::Path, app: &mut App) {
+    let canonical_repo_root = StandardizedPath::from_local_canonicalized(path).unwrap();
+    let detected_repositories = DetectedRepositories::handle(app);
+    app.update_model(&detected_repositories, |repositories, _| {
+        repositories.insert_test_repo_root(canonical_repo_root);
+    });
 }
 
 /// Helper function to get current cursor position (head of first selection).
@@ -1558,6 +1592,101 @@ fn test_vim_z_followed_by_non_z_clears_pending() {
 
         vim_user_insert(&editor, "j", &mut app);
         assert_eq!(cursor_position(&editor, &app), (2, 0));
+    });
+}
+
+#[test]
+fn test_vim_yank_file_location_copies_repo_relative_line() {
+    let _feature_flag_guard = FeatureFlag::VimCodeEditor.override_enabled(true);
+
+    let dir = tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    let file = repo.join("src/main.rs");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, "first\nsecond\nthird\n").unwrap();
+
+    App::test((), |mut app| async move {
+        initialize_code_editor_app(&mut app);
+        register_test_repo_root(&repo, &mut app);
+
+        let editor = add_code_editor("first\nsecond\nthird\n", &mut app);
+        set_file_location(&editor, LocalOrRemotePath::Local(file.clone()), &mut app);
+        set_cursor_position(&editor, 2, 0, &mut app);
+
+        vim_user_insert(&editor, "gy", &mut app);
+
+        assert_eq!(clipboard_text(&mut app), "src/main.rs:2");
+        assert_eq!(buffer_text(&editor, &app), "first\nsecond\nthird");
+        assert_eq!(vim_mode(&editor, &app), Some(VimMode::Normal));
+    });
+}
+
+#[test]
+fn test_vim_yank_file_location_copies_visual_line_range() {
+    let _feature_flag_guard = FeatureFlag::VimCodeEditor.override_enabled(true);
+
+    let dir = tempdir().unwrap();
+    let repo = dir.path().join("repo");
+    let file = repo.join("src/main.rs");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, "first\nsecond\nthird\n").unwrap();
+
+    App::test((), |mut app| async move {
+        initialize_code_editor_app(&mut app);
+        register_test_repo_root(&repo, &mut app);
+
+        let editor = add_code_editor("first\nsecond\nthird\n", &mut app);
+        set_file_location(&editor, LocalOrRemotePath::Local(file.clone()), &mut app);
+        set_cursor_position(&editor, 1, 0, &mut app);
+
+        vim_user_insert(&editor, "V", &mut app);
+        vim_user_insert(&editor, "j", &mut app);
+        vim_user_insert(&editor, "gy", &mut app);
+
+        assert_eq!(clipboard_text(&mut app), "src/main.rs:1-2");
+        assert_eq!(buffer_text(&editor, &app), "first\nsecond\nthird");
+    });
+}
+
+#[test]
+fn test_vim_yank_file_location_falls_back_to_display_path() {
+    let _feature_flag_guard = FeatureFlag::VimCodeEditor.override_enabled(true);
+
+    let dir = tempdir().unwrap();
+    let file = dir.path().join("standalone.rs");
+    fs::write(&file, "first\nsecond\nthird\n").unwrap();
+
+    App::test((), |mut app| async move {
+        initialize_code_editor_app(&mut app);
+
+        let editor = add_code_editor("first\nsecond\nthird\n", &mut app);
+        set_file_location(&editor, LocalOrRemotePath::Local(file.clone()), &mut app);
+        set_cursor_position(&editor, 3, 0, &mut app);
+
+        vim_user_insert(&editor, "gy", &mut app);
+
+        assert_eq!(
+            clipboard_text(&mut app),
+            format!("{}:3", file.to_string_lossy())
+        );
+        assert_eq!(buffer_text(&editor, &app), "first\nsecond\nthird");
+    });
+}
+
+#[test]
+fn test_vim_yank_file_location_without_path_preserves_clipboard() {
+    let _feature_flag_guard = FeatureFlag::VimCodeEditor.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_code_editor_app(&mut app);
+        let editor = add_code_editor("first\nsecond\nthird\n", &mut app);
+        write_clipboard("unchanged", &mut app);
+
+        vim_user_insert(&editor, "gy", &mut app);
+
+        assert_eq!(clipboard_text(&mut app), "unchanged");
+        assert_eq!(buffer_text(&editor, &app), "first\nsecond\nthird");
+        assert_eq!(vim_mode(&editor, &app), Some(VimMode::Normal));
     });
 }
 
