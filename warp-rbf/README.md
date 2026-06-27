@@ -21,6 +21,9 @@ This is my ~~fork~~ flavour of [Warp](https://github.com/warpdotdev/Warp), simil
 **Enable vertical tabs an groups**
 — Tab groups (macOS), the vertical tab layout, and directory-colored tabs.
 
+**Show Warp and RBF versions**
+— Settings -> About shows both the upstream Warp version and the Warp RBF version, each with its own copy button.
+
 **Live skill hot-reload**
 — Add, rename, or remove skills in your home or project skills dirs and they reload without restarting Warp.
 
@@ -56,7 +59,17 @@ This is my ~~fork~~ flavour of [Warp](https://github.com/warpdotdev/Warp), simil
 **Yank editor file location from Vim**
 — Copy the repository-relative file path and line number/range with the Vim shortcut `cy` in normal mode, or `gy` in visual-line mode, to easily share code locations.
 
-## 🟠⋯ Settings, Themes, and Data
+**Editor Vim utility motions**
+— when Warp's code editor has Vim mode enabled, common editor utility actions are available without leaving the editing loop.
+- `gn` toggles code-editor line numbers on/off
+- `zw` toggles soft wrap for the focused code editor
+- `cy` copies the current file location as `path:line`
+- in visual-line mode, `gy` copies the selected file range as `path:start-end`
+- `option-j` / `meta-j` moves the current line, or visual-line selection, down
+- `option-k` / `meta-k` moves the current line, or visual-line selection, up
+- Command Palette (`cmd-shift-p`) also has entries to show/hide line numbers, choose absolute/relative line-number style, and enable/disable soft wrap
+
+## 🟠⋯ Settings, Themes, And Data
 Copy your regular warp configs
 ```
 cp -a $HOME/.warp $HOME/.warp-oss

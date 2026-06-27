@@ -13,6 +13,7 @@ use warp_editor::content::buffer::{InitialBufferState, ToBufferCharOffset, ToBuf
 use warp_editor::model::CoreEditorModel;
 use warp_editor::render::element::VerticalExpansionBehavior;
 use warp_editor::render::model::viewport::SizeInfo;
+use warp_editor::render::model::WidthSetting;
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warp_util::standardized_path::StandardizedPath;
 use warp_util::user_input::UserInput;
@@ -29,12 +30,12 @@ use crate::code::editor::view::{CodeEditorRenderOptions, CodeEditorView, CodeEdi
 use crate::notebooks::editor::keys::NotebookKeybindings;
 use crate::server::server_api::team::MockTeamClient;
 use crate::server::server_api::workspace::MockWorkspaceClient;
-use crate::settings::AppEditorSettings;
+use crate::settings::{AppEditorSettings, CodeEditorLineNumberMode};
 use crate::settings_view::keybindings::KeybindingChangedNotifier;
 use crate::test_util::settings::initialize_settings_for_tests;
 use crate::vim_registers::VimRegisters;
-use crate::workspace::ActiveSession;
 use crate::workspace::sync_inputs::SyncedInputState;
+use crate::workspace::ActiveSession;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 
 // Await render/layout completion for a CodeEditorView in tests.
@@ -116,9 +117,41 @@ fn vim_user_insert(editor: &ViewHandle<CodeEditorView>, text: &str, app: &mut Ap
     });
 }
 
+fn vim_keystroke(editor: &ViewHandle<CodeEditorView>, keystroke: &str, app: &mut App) {
+    editor.update(app, |view, ctx| {
+        view.vim_keystroke(&Keystroke::parse(keystroke).unwrap(), ctx);
+    });
+}
+
 /// Helper function to get buffer text from CodeEditorView.
 fn buffer_text(editor: &ViewHandle<CodeEditorView>, app: &App) -> String {
     editor.read(app, |view, ctx| view.text(ctx).into_string())
+}
+
+fn code_editor_line_number_mode(app: &App) -> CodeEditorLineNumberMode {
+    app.read(|ctx| {
+        *AppEditorSettings::as_ref(ctx)
+            .code_editor_line_number_mode
+            .value()
+    })
+}
+
+fn editor_soft_wrap(editor: &ViewHandle<CodeEditorView>, app: &App) -> bool {
+    editor.read(app, |view, _| view.soft_wrap)
+}
+
+fn editor_width_setting(editor: &ViewHandle<CodeEditorView>, app: &App) -> WidthSetting {
+    editor.read(app, |view, ctx| {
+        view.model
+            .as_ref(ctx)
+            .render_state()
+            .as_ref(ctx)
+            .width_setting()
+    })
+}
+
+fn editor_show_line_numbers(editor: &ViewHandle<CodeEditorView>, app: &App) -> bool {
+    editor.read(app, |view, _| view.display_options.show_line_numbers)
 }
 
 fn clipboard_text(app: &mut App) -> String {
@@ -163,6 +196,16 @@ fn cursor_position(editor: &ViewHandle<CodeEditorView>, app: &App) -> (usize, us
 /// Helper function to get vim mode from CodeEditorView.
 fn vim_mode(editor: &ViewHandle<CodeEditorView>, app: &App) -> Option<VimMode> {
     editor.read(app, |view, ctx| view.vim_mode(ctx))
+}
+
+fn selected_lines(editor: &ViewHandle<CodeEditorView>, app: &App) -> Option<(u32, u32)> {
+    editor.read(app, |view, ctx| view.selected_lines(ctx))
+}
+
+fn undo(editor: &ViewHandle<CodeEditorView>, app: &mut App) {
+    editor.update(app, |view, ctx| {
+        view.handle_action(&CodeEditorViewAction::Undo, ctx);
+    });
 }
 
 /// Helper to set the cursor to a specific (row, col). Rows are 1-based to match test expectations.
@@ -1613,7 +1656,7 @@ fn test_vim_yank_file_location_copies_repo_relative_line() {
         set_file_location(&editor, LocalOrRemotePath::Local(file.clone()), &mut app);
         set_cursor_position(&editor, 2, 0, &mut app);
 
-        vim_user_insert(&editor, "gy", &mut app);
+        vim_user_insert(&editor, "cy", &mut app);
 
         assert_eq!(clipboard_text(&mut app), "src/main.rs:2");
         assert_eq!(buffer_text(&editor, &app), "first\nsecond\nthird");
@@ -1649,6 +1692,182 @@ fn test_vim_yank_file_location_copies_visual_line_range() {
 }
 
 #[test]
+fn test_vim_toggle_code_editor_line_numbers() {
+    let _feature_flag_guard = FeatureFlag::VimCodeEditor.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_code_editor_app(&mut app);
+        let editor = add_code_editor("aaa\nbbb\nccc", &mut app);
+
+        editor.update(&mut app, |view, ctx| {
+            view.set_code_editor_line_number_mode(CodeEditorLineNumberMode::Relative, ctx);
+        });
+
+        assert!(editor_show_line_numbers(&editor, &app));
+        assert_eq!(
+            code_editor_line_number_mode(&app),
+            CodeEditorLineNumberMode::Relative
+        );
+
+        vim_user_insert(&editor, "gn", &mut app);
+
+        assert!(!editor_show_line_numbers(&editor, &app));
+        assert_eq!(
+            code_editor_line_number_mode(&app),
+            CodeEditorLineNumberMode::Relative
+        );
+
+        vim_user_insert(&editor, "gn", &mut app);
+
+        assert!(editor_show_line_numbers(&editor, &app));
+        assert_eq!(
+            code_editor_line_number_mode(&app),
+            CodeEditorLineNumberMode::Relative
+        );
+    });
+}
+
+#[test]
+fn test_code_editor_line_number_visibility_actions() {
+    let _feature_flag_guard = FeatureFlag::VimCodeEditor.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_code_editor_app(&mut app);
+        let editor = add_code_editor("aaa\nbbb\nccc", &mut app);
+
+        editor.update(&mut app, |view, ctx| {
+            view.handle_action(&CodeEditorViewAction::SetLineNumbersVisible(false), ctx);
+        });
+
+        assert!(!editor_show_line_numbers(&editor, &app));
+
+        editor.update(&mut app, |view, ctx| {
+            view.handle_action(&CodeEditorViewAction::SetLineNumbersVisible(true), ctx);
+        });
+
+        assert!(editor_show_line_numbers(&editor, &app));
+    });
+}
+
+#[test]
+fn test_code_editor_line_number_mode_actions() {
+    let _feature_flag_guard = FeatureFlag::VimCodeEditor.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_code_editor_app(&mut app);
+        let editor = add_code_editor("aaa\nbbb\nccc", &mut app);
+
+        editor.update(&mut app, |view, ctx| {
+            view.handle_action(
+                &CodeEditorViewAction::SetLineNumberMode(CodeEditorLineNumberMode::Relative),
+                ctx,
+            );
+        });
+
+        assert_eq!(
+            code_editor_line_number_mode(&app),
+            CodeEditorLineNumberMode::Relative
+        );
+
+        editor.update(&mut app, |view, ctx| {
+            view.handle_action(
+                &CodeEditorViewAction::SetLineNumberMode(CodeEditorLineNumberMode::Absolute),
+                ctx,
+            );
+        });
+
+        assert_eq!(
+            code_editor_line_number_mode(&app),
+            CodeEditorLineNumberMode::Absolute
+        );
+    });
+}
+
+#[test]
+fn test_vim_toggle_code_editor_soft_wrap() {
+    let _feature_flag_guard = FeatureFlag::VimCodeEditor.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_code_editor_app(&mut app);
+        let long_line = vec!["word"; 120].join(" ");
+        let editor = add_code_editor(&long_line, &mut app);
+        set_cursor_position(&editor, 1, 4, &mut app);
+        layout_editor_view(&mut app, &editor).await;
+
+        assert!(editor_soft_wrap(&editor, &app));
+        assert_eq!(
+            editor_width_setting(&editor, &app),
+            WidthSetting::FitViewport
+        );
+
+        vim_user_insert(&editor, "zw", &mut app);
+        layout_editor_view(&mut app, &editor).await;
+        layout_editor_view(&mut app, &editor).await;
+
+        assert!(!editor_soft_wrap(&editor, &app));
+        assert_eq!(
+            editor_width_setting(&editor, &app),
+            WidthSetting::InfiniteWidth
+        );
+        assert_eq!(buffer_text(&editor, &app), long_line);
+        assert_eq!(cursor_position(&editor, &app), (1, 4));
+
+        vim_user_insert(&editor, "zw", &mut app);
+        layout_editor_view(&mut app, &editor).await;
+
+        assert!(editor_soft_wrap(&editor, &app));
+        assert_eq!(
+            editor_width_setting(&editor, &app),
+            WidthSetting::FitViewport
+        );
+        assert_eq!(buffer_text(&editor, &app), long_line);
+        assert_eq!(cursor_position(&editor, &app), (1, 4));
+
+        editor.update(&mut app, |view, ctx| {
+            view.handle_action(
+                &CodeEditorViewAction::VimUserTyped(UserInput::new("z")),
+                ctx,
+            );
+            view.handle_action(
+                &CodeEditorViewAction::VimUserTyped(UserInput::new("w")),
+                ctx,
+            );
+        });
+        layout_editor_view(&mut app, &editor).await;
+
+        assert!(!editor_soft_wrap(&editor, &app));
+        assert_eq!(
+            editor_width_setting(&editor, &app),
+            WidthSetting::InfiniteWidth
+        );
+    });
+}
+
+#[test]
+fn test_code_editor_soft_wrap_actions() {
+    let _feature_flag_guard = FeatureFlag::VimCodeEditor.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_code_editor_app(&mut app);
+        let editor = add_code_editor("aaa bbb ccc ddd eee fff ggg", &mut app);
+
+        assert!(editor_soft_wrap(&editor, &app));
+
+        editor.update(&mut app, |view, ctx| {
+            view.handle_action(&CodeEditorViewAction::SetSoftWrap(false), ctx);
+        });
+
+        assert!(!editor_soft_wrap(&editor, &app));
+
+        editor.update(&mut app, |view, ctx| {
+            view.handle_action(&CodeEditorViewAction::SetSoftWrap(true), ctx);
+        });
+
+        assert!(editor_soft_wrap(&editor, &app));
+    });
+}
+
+#[test]
 fn test_vim_yank_file_location_falls_back_to_display_path() {
     let _feature_flag_guard = FeatureFlag::VimCodeEditor.override_enabled(true);
 
@@ -1663,7 +1882,7 @@ fn test_vim_yank_file_location_falls_back_to_display_path() {
         set_file_location(&editor, LocalOrRemotePath::Local(file.clone()), &mut app);
         set_cursor_position(&editor, 3, 0, &mut app);
 
-        vim_user_insert(&editor, "gy", &mut app);
+        vim_user_insert(&editor, "cy", &mut app);
 
         assert_eq!(
             clipboard_text(&mut app),
@@ -1682,11 +1901,107 @@ fn test_vim_yank_file_location_without_path_preserves_clipboard() {
         let editor = add_code_editor("first\nsecond\nthird\n", &mut app);
         write_clipboard("unchanged", &mut app);
 
-        vim_user_insert(&editor, "gy", &mut app);
+        vim_user_insert(&editor, "cy", &mut app);
 
         assert_eq!(clipboard_text(&mut app), "unchanged");
         assert_eq!(buffer_text(&editor, &app), "first\nsecond\nthird");
         assert_eq!(vim_mode(&editor, &app), Some(VimMode::Normal));
+    });
+}
+
+#[test]
+fn test_vim_move_line_block_down_and_undo() {
+    let _feature_flag_guard = FeatureFlag::VimCodeEditor.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_code_editor_app(&mut app);
+        let editor = add_code_editor("aaa\nbbb\nccc", &mut app);
+        set_cursor_position(&editor, 2, 1, &mut app);
+
+        vim_keystroke(&editor, "alt-j", &mut app);
+
+        assert_eq!(buffer_text(&editor, &app), "aaa\nccc\nbbb");
+        assert_eq!(cursor_position(&editor, &app), (3, 1));
+        assert_eq!(vim_mode(&editor, &app), Some(VimMode::Normal));
+
+        undo(&editor, &mut app);
+
+        assert_eq!(buffer_text(&editor, &app), "aaa\nbbb\nccc");
+        assert_eq!(cursor_position(&editor, &app), (2, 1));
+    });
+}
+
+#[test]
+fn test_vim_move_line_block_up_and_boundaries() {
+    let _feature_flag_guard = FeatureFlag::VimCodeEditor.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_code_editor_app(&mut app);
+        let editor = add_code_editor("aaa\nbbb\nccc", &mut app);
+
+        set_cursor_position(&editor, 1, 1, &mut app);
+        vim_keystroke(&editor, "alt-k", &mut app);
+        assert_eq!(buffer_text(&editor, &app), "aaa\nbbb\nccc");
+        assert_eq!(cursor_position(&editor, &app), (1, 1));
+
+        set_cursor_position(&editor, 3, 1, &mut app);
+        vim_keystroke(&editor, "alt-j", &mut app);
+        assert_eq!(buffer_text(&editor, &app), "aaa\nbbb\nccc");
+        assert_eq!(cursor_position(&editor, &app), (3, 1));
+
+        vim_keystroke(&editor, "meta-k", &mut app);
+        assert_eq!(buffer_text(&editor, &app), "aaa\nccc\nbbb");
+        assert_eq!(cursor_position(&editor, &app), (2, 1));
+    });
+}
+
+#[test]
+fn test_vim_move_visual_line_block_down_preserves_selection_and_undo() {
+    let _feature_flag_guard = FeatureFlag::VimCodeEditor.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_code_editor_app(&mut app);
+        let editor = add_code_editor("aaa\nbbb\nccc\nddd", &mut app);
+        set_cursor_position(&editor, 2, 0, &mut app);
+        vim_user_insert(&editor, "V", &mut app);
+        vim_user_insert(&editor, "j", &mut app);
+
+        assert_eq!(
+            vim_mode(&editor, &app),
+            Some(VimMode::Visual(MotionType::Linewise))
+        );
+
+        vim_keystroke(&editor, "meta-j", &mut app);
+
+        assert_eq!(buffer_text(&editor, &app), "aaa\nddd\nbbb\nccc");
+        assert_eq!(selected_lines(&editor, &app), Some((3, 4)));
+        assert_eq!(vim_mode(&editor, &app), Some(VimMode::Normal));
+
+        undo(&editor, &mut app);
+
+        assert_eq!(buffer_text(&editor, &app), "aaa\nbbb\nccc\nddd");
+        assert_eq!(selected_lines(&editor, &app), Some((2, 3)));
+    });
+}
+
+#[test]
+fn test_vim_move_visual_line_block_boundary_preserves_visual_selection() {
+    let _feature_flag_guard = FeatureFlag::VimCodeEditor.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_code_editor_app(&mut app);
+        let editor = add_code_editor("aaa\nbbb\nccc", &mut app);
+        set_cursor_position(&editor, 1, 0, &mut app);
+        vim_user_insert(&editor, "V", &mut app);
+        vim_user_insert(&editor, "j", &mut app);
+
+        vim_keystroke(&editor, "alt-k", &mut app);
+
+        assert_eq!(buffer_text(&editor, &app), "aaa\nbbb\nccc");
+        assert_eq!(
+            vim_mode(&editor, &app),
+            Some(VimMode::Visual(MotionType::Linewise))
+        );
     });
 }
 
