@@ -1215,6 +1215,9 @@ impl LocalCodeEditorView {
         let mut local_editor =
             Self::new(editor, None, enable_diff_nav_by_default, display_mode, ctx);
 
+        local_editor.editor.update(ctx, |editor, _| {
+            editor.set_file_location(Some(location.clone()));
+        });
         local_editor.metadata = Some(LoadedFileMetadata {
             id: file_id,
             location,
@@ -1665,6 +1668,9 @@ impl LocalCodeEditorView {
             id: file_id,
             location: BufferFileLocation::Local(path.clone()),
         });
+        me.editor.update(ctx, |editor, _| {
+            editor.set_file_location(Some(BufferFileLocation::Local(path.clone())));
+        });
 
         me.set_new_file(false);
 
@@ -1756,6 +1762,9 @@ impl LocalCodeEditorView {
         self.metadata = Some(LoadedFileMetadata {
             id: file_id,
             location: BufferFileLocation::Local(new_path.to_path_buf()),
+        });
+        self.editor.update(ctx, |editor, _| {
+            editor.set_file_location(Some(BufferFileLocation::Local(new_path.to_path_buf())));
         });
 
         self.editor.update(ctx, |editor, ctx| {

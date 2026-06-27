@@ -6,6 +6,12 @@ title: Changelog
 
 ---
 
+# 🔵⋯ v0.11.0 (2026-06-30)
+## 🟠⋯ Added
+- 2026-06-30 - feat (user need) | copy the repository-relative file path and line number with the Vim shortcut 'gy' (or selected range in visual mode) to easily share code locations (#warp-42)
+
+---
+
 # 🔵⋯ v0.10.0 (2026-06-30)
 ## 🟠⋯ Added
 - 2026-06-30 - feat (user need) | toggle the code editor's soft wrap state on/off with the Vim shortcut 'zw' to easily inspect long lines (#warp-41)

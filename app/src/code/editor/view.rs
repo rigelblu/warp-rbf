@@ -55,6 +55,7 @@ use warpui::{
 
 use crate::appearance::Appearance;
 use crate::code::buffer_location::LocalOrRemotePath;
+use crate::code::editor::EditorReviewComment;
 use crate::code::editor::comment_editor::{CommentEditor, CommentEditorEvent};
 use crate::code::editor::comments::PendingComment;
 use crate::code::editor::diff::DiffStatus;
@@ -70,7 +71,6 @@ use crate::code::editor::model::{
 };
 use crate::code::editor::nav_bar::{NavBar, NavBarBehavior, NavBarEvent};
 use crate::code::editor::scroll::{ScrollPosition, ScrollTrigger, ScrollWheelBehavior};
-use crate::code::editor::EditorReviewComment;
 use crate::code::{
     DiffResult, NoopCommentEditorProvider, NoopFindReferencesCardProvider,
     ShowCommentEditorProvider, ShowFindReferencesCardProvider,
@@ -290,6 +290,7 @@ pub struct CodeEditorView {
     show_find_references_provider: Box<dyn ShowFindReferencesCardProvider>,
     /// The offset where find references card is anchored (if showing).
     find_references_anchor_offset: Option<CharOffset>,
+    file_location: Option<LocalOrRemotePath>,
     window_id: WindowId,
 }
 
@@ -438,8 +439,17 @@ impl CodeEditorView {
             ),
             show_find_references_provider: render_options.show_find_references_provider,
             find_references_anchor_offset: None,
+            file_location: None,
             window_id: ctx.window_id(),
         }
+    }
+
+    pub fn set_file_location(&mut self, file_location: Option<LocalOrRemotePath>) {
+        self.file_location = file_location;
+    }
+
+    pub fn file_location(&self) -> Option<&LocalOrRemotePath> {
+        self.file_location.as_ref()
     }
 
     pub fn set_find_references_anchor_offset(&mut self, offset: Option<CharOffset>) {
