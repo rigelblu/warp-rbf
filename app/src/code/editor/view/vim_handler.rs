@@ -1,4 +1,6 @@
 use repo_metadata::repositories::DetectedRepositories;
+use string_offset::CharOffset;
+use vec1::Vec1;
 use vim::vim::{
     BracketChar, CharacterMotion, Direction, FindCharMotion, FirstNonWhitespaceMotion,
     InsertPosition, LineMotion, ModeTransition, MotionType, TextObjectType, VimHandler, VimMode,
@@ -517,13 +519,13 @@ impl VimHandler for CodeEditorView {
             .get_root_for_path(&file_location)
             .and_then(|repo_root| {
                 let file_location_for_strip = match &file_location {
-                    LocalOrRemotePath::Local(path) => StandardizedPath::from_local_canonicalized(
-                        path,
-                    )
-                    .ok()
-                    .and_then(|path| path.to_local_path())
-                    .map(LocalOrRemotePath::Local)
-                    .unwrap_or_else(|| file_location.clone()),
+                    LocalOrRemotePath::Local(path) => {
+                        StandardizedPath::from_local_canonicalized(path)
+                            .ok()
+                            .and_then(|path| path.to_local_path())
+                            .map(LocalOrRemotePath::Local)
+                            .unwrap_or_else(|| file_location.clone())
+                    }
                     LocalOrRemotePath::Remote(_) => file_location.clone(),
                 };
                 repo_root.strip_repo_prefix(&file_location_for_strip)
@@ -571,6 +573,156 @@ impl VimHandler for CodeEditorView {
         ctx.clipboard().write(ClipboardContent::plain_text(format!(
             "{path}:{line_suffix}"
         )));
+    }
+
+    fn toggle_line_numbers(&mut self, ctx: &mut ViewContext<Self>) {
+        self.toggle_code_editor_line_numbers_visible(ctx);
+    }
+
+    fn toggle_soft_wrap(&mut self, ctx: &mut ViewContext<Self>) {
+        self.toggle_code_editor_soft_wrap(ctx);
+    }
+
+    fn move_line_block(&mut self, direction: &Direction, ctx: &mut ViewContext<Self>) {
+        let was_visual_linewise = self.vim_mode(ctx) == Some(VimMode::Visual(MotionType::Linewise));
+
+        let moved = self.model.update(ctx, |model, ctx| {
+            let buffer = model.buffer().as_ref(ctx);
+            let text = buffer
+                .text_in_range(CharOffset::from(1)..buffer.max_charoffset())
+                .into_string();
+            if text.is_empty() {
+                return false;
+            }
+
+            let mut lines = text.split('\n').map(str::to_owned).collect::<Vec<String>>();
+            if lines.len() <= 1 {
+                return false;
+            }
+
+            let selection = *model
+                .buffer_selection_model()
+                .as_ref(ctx)
+                .selection_offsets()
+                .first();
+            let head_point = selection.head.to_buffer_point(buffer);
+            let (start_row, end_row, head_at_end, cursor_column) = if was_visual_linewise {
+                let tail = model
+                    .vim_visual_tails()
+                    .first()
+                    .copied()
+                    .unwrap_or(selection.tail);
+                let tail_point = tail.to_buffer_point(buffer);
+                (
+                    head_point.row.min(tail_point.row),
+                    head_point.row.max(tail_point.row),
+                    head_point.row >= tail_point.row,
+                    head_point.column,
+                )
+            } else {
+                (head_point.row, head_point.row, true, head_point.column)
+            };
+
+            let start_idx = start_row.saturating_sub(1) as usize;
+            let end_idx = end_row.saturating_sub(1) as usize;
+            if start_idx >= lines.len() || end_idx >= lines.len() || start_idx > end_idx {
+                return false;
+            }
+
+            let new_start_idx = match direction {
+                Direction::Forward => {
+                    if end_idx + 1 >= lines.len() {
+                        return false;
+                    }
+                    start_idx + 1
+                }
+                Direction::Backward => {
+                    if start_idx == 0 {
+                        return false;
+                    }
+                    start_idx - 1
+                }
+            };
+
+            let block_len = end_idx - start_idx + 1;
+            let block = lines.drain(start_idx..=end_idx).collect::<Vec<_>>();
+            for (idx, line) in block.into_iter().enumerate() {
+                lines.insert(new_start_idx + idx, line);
+            }
+
+            let old_selection = if was_visual_linewise {
+                let start = Point::new(start_row, 0).to_buffer_char_offset(buffer);
+                let end =
+                    Point::new(end_row, buffer.line_len(end_row)).to_buffer_char_offset(buffer);
+                Some(if head_at_end {
+                    SelectionOffsets {
+                        head: end,
+                        tail: start,
+                    }
+                } else {
+                    SelectionOffsets {
+                        head: start,
+                        tail: end,
+                    }
+                })
+            } else {
+                None
+            };
+            let edit_range = CharOffset::from(1)..buffer.max_charoffset();
+
+            if let Some(old_selection) = old_selection {
+                model.vim_set_selections(Vec1::new(old_selection), AutoScrollBehavior::None, ctx);
+            }
+
+            let new_text = lines.join("\n");
+            let edits = Vec1::new((new_text, edit_range));
+            let selection_model = model.buffer_selection_model().clone();
+            model.update_content(
+                |mut content, ctx| {
+                    content.apply_edit(
+                        BufferEditAction::InsertAtCharOffsetRanges { edits: &edits },
+                        EditOrigin::UserInitiated,
+                        selection_model,
+                        ctx,
+                    );
+                },
+                ctx,
+            );
+
+            let buffer = model.buffer().as_ref(ctx);
+            let new_start_row = (new_start_idx + 1) as u32;
+            let new_selection = if was_visual_linewise {
+                let new_end_row = (new_start_idx + block_len) as u32;
+                let start = Point::new(new_start_row, 0).to_buffer_char_offset(buffer);
+                let end = Point::new(new_end_row, buffer.line_len(new_end_row))
+                    .to_buffer_char_offset(buffer);
+                if head_at_end {
+                    SelectionOffsets {
+                        head: end,
+                        tail: start,
+                    }
+                } else {
+                    SelectionOffsets {
+                        head: start,
+                        tail: end,
+                    }
+                }
+            } else {
+                let column = cursor_column.min(buffer.line_len(new_start_row));
+                let offset = Point::new(new_start_row, column).to_buffer_char_offset(buffer);
+                SelectionOffsets {
+                    head: offset,
+                    tail: offset,
+                }
+            };
+            model.vim_set_selections(Vec1::new(new_selection), AutoScrollBehavior::Selection, ctx);
+
+            true
+        });
+
+        if moved && was_visual_linewise {
+            self.enter_vim_normal_mode(ctx);
+        }
     }
 
     fn visual_operator(

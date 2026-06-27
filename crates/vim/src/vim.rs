@@ -590,10 +590,14 @@ pub enum VimEventType {
     GotoDefinition,
     FindReferences,
     ShowHover,
-    /// Toggle code-editor line-number mode. Triggered by `gn`.
-    ToggleLineNumberMode,
-    /// Yank code-editor file location. Triggered by `gy`.
+    /// Toggle code-editor line-number visibility. Triggered by `gn`.
+    ToggleLineNumbers,
+    /// Yank code-editor file location. Triggered by `cy` in Normal mode and `gy` in Visual mode.
     YankFileLocation,
+    /// Move code-editor line block. Triggered by Option/Meta+j/k.
+    MoveLineBlock {
+        direction: Direction,
+    },
     /// Toggle code-editor soft wrapping. Triggered by `zw`.
     ToggleSoftWrap,
     /// Center the current line vertically in the viewport. Triggered by `zz`.
@@ -660,8 +664,9 @@ impl VimEventType {
             | VimEventType::GotoDefinition
             | VimEventType::FindReferences
             | VimEventType::ShowHover
-            | VimEventType::ToggleLineNumberMode
+            | VimEventType::ToggleLineNumbers
             | VimEventType::YankFileLocation
+            | VimEventType::MoveLineBlock { .. }
             | VimEventType::ToggleSoftWrap
             | VimEventType::CenterCursorVertically
             | VimEventType::ScrollHalfPageDown
@@ -796,7 +801,7 @@ impl VimFSA {
             "backspace" => match self.mode {
                 VimMode::Insert => self.handle_insert_mode_backspace().into(),
                 VimMode::Visual(_) | VimMode::Normal => {
-                    return self.typed_character(BACKSPACE_CHAR)
+                    return self.typed_character(BACKSPACE_CHAR);
                 }
                 VimMode::Replace => self.change_mode(VimMode::Normal.into()).into(),
             },
@@ -838,6 +843,32 @@ impl VimFSA {
                     }
                 }
                 _ => return None,
+            },
+            "alt-j" | "meta-j" => match self.mode {
+                VimMode::Normal | VimMode::Visual(_) => {
+                    let count = self.get_action_count().unwrap_or(1);
+                    self.clear();
+                    VimEvent {
+                        event_type: VimEventType::MoveLineBlock {
+                            direction: Direction::Forward,
+                        },
+                        count,
+                    }
+                }
+                VimMode::Insert | VimMode::Replace => return None,
+            },
+            "alt-k" | "meta-k" => match self.mode {
+                VimMode::Normal | VimMode::Visual(_) => {
+                    let count = self.get_action_count().unwrap_or(1);
+                    self.clear();
+                    VimEvent {
+                        event_type: VimEventType::MoveLineBlock {
+                            direction: Direction::Backward,
+                        },
+                        count,
+                    }
+                }
+                VimMode::Insert | VimMode::Replace => return None,
             },
             _ => return None,
         };
@@ -1086,9 +1117,8 @@ impl VimFSA {
                 'g' => VimEventType::Navigate(VimMotion::JumpToFirstLine),
                 'd' => VimEventType::GotoDefinition,
                 'h' => VimEventType::ShowHover,
-                'n' => VimEventType::ToggleLineNumberMode,
+                'n' => VimEventType::ToggleLineNumbers,
                 'r' => VimEventType::FindReferences,
-                'y' => VimEventType::YankFileLocation,
                 // For two-character operations (g~, gu, gU, gc),
                 // replace the existing pending action, the generic G,
                 // with a more specific pending action.
@@ -1151,6 +1181,9 @@ impl VimFSA {
                 operator,
                 pending_operand,
             } => {
+                if operator == VimOperator::Change && pending_operand.is_none() && c == 'y' {
+                    return Some(VimEventType::YankFileLocation);
+                }
                 let event = match pending_operand {
                     Some(operand) => self.handle_normal_pending_operand(c, operator, operand)?,
                     None => self.handle_normal_pending_operation(c, operator)?,
@@ -1947,8 +1980,9 @@ where
             VimEventType::GotoDefinition => self.goto_definition(ctx),
             VimEventType::FindReferences => self.find_references(ctx),
             VimEventType::ShowHover => self.show_hover(ctx),
-            VimEventType::ToggleLineNumberMode => self.toggle_line_number_mode(ctx),
+            VimEventType::ToggleLineNumbers => self.toggle_line_numbers(ctx),
             VimEventType::YankFileLocation => self.yank_file_location(ctx),
+            VimEventType::MoveLineBlock { direction } => self.move_line_block(direction, ctx),
             VimEventType::ToggleSoftWrap => self.toggle_soft_wrap(ctx),
             VimEventType::CenterCursorVertically => self.center_cursor_vertically(ctx),
             VimEventType::ScrollHalfPageDown => self.scroll_half_page_down(event.count, ctx),
@@ -2071,10 +2105,12 @@ pub trait VimHandler {
     fn find_references(&mut self, _ctx: &mut ViewContext<Self>) {}
     /// Show hover information for the symbol under cursor (gh).
     fn show_hover(&mut self, _ctx: &mut ViewContext<Self>) {}
-    /// Toggle code-editor line-number mode (gn).
-    fn toggle_line_number_mode(&mut self, _ctx: &mut ViewContext<Self>) {}
-    /// Yank the code-editor file location to the clipboard (gy).
+    /// Toggle code-editor line-number visibility (gn).
+    fn toggle_line_numbers(&mut self, _ctx: &mut ViewContext<Self>) {}
+    /// Yank the code-editor file location to the clipboard.
     fn yank_file_location(&mut self, _ctx: &mut ViewContext<Self>) {}
+    /// Move the current line or visual-line block.
+    fn move_line_block(&mut self, _direction: &Direction, _ctx: &mut ViewContext<Self>) {}
     /// Toggle code-editor soft wrapping (zw).
     fn toggle_soft_wrap(&mut self, _ctx: &mut ViewContext<Self>) {}
     /// Center the current line vertically in the viewport (zz).

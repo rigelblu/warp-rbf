@@ -6,6 +6,12 @@ title: Changelog
 
 ---
 
+# 🔵⋯ v0.12.0 (2026-06-30)
+## 🟠⋯ Added
+- 2026-06-30 - feat (user need) | move the current line or visual-line selection up/down with the Vim shortcuts Option/Meta+j/k to easily reorder code blocks (#warp-43)
+
+---
+
 # 🔵⋯ v0.11.0 (2026-06-30)
 ## 🟠⋯ Added
 - 2026-06-30 - feat (user need) | copy the repository-relative file path and line number with the Vim shortcut 'gy' (or selected range in visual mode) to easily share code locations (#warp-42)

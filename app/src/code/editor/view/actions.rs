@@ -30,6 +30,7 @@ use crate::code_review::comments::CommentId;
 use crate::editor::InteractionState;
 use crate::features::FeatureFlag;
 use crate::notebooks::editor::model::word_unit;
+use crate::settings::CodeEditorLineNumberMode;
 use crate::util::bindings::CustomAction;
 
 /// Limit the keybindings that conflict with the Agent Mode embedded editor.
@@ -66,6 +67,26 @@ pub fn init(app: &mut AppContext) {
         FixedBinding::new(
             "numpadenter",
             CodeEditorViewAction::VimEnter,
+            text_entry.clone() & id!("Vim"),
+        ),
+        FixedBinding::new(
+            "alt-j",
+            CodeEditorViewAction::VimMoveLineBlockDown,
+            text_entry.clone() & id!("Vim"),
+        ),
+        FixedBinding::new(
+            "meta-j",
+            CodeEditorViewAction::VimMoveLineBlockDown,
+            text_entry.clone() & id!("Vim"),
+        ),
+        FixedBinding::new(
+            "alt-k",
+            CodeEditorViewAction::VimMoveLineBlockUp,
+            text_entry.clone() & id!("Vim"),
+        ),
+        FixedBinding::new(
+            "meta-k",
+            CodeEditorViewAction::VimMoveLineBlockUp,
             text_entry.clone() & id!("Vim"),
         ),
         FixedBinding::new(
@@ -593,6 +614,46 @@ pub fn init(app: &mut AppContext) {
     .with_context_predicate(text_entry.clone() & id!("Vim"))
     .with_key_binding("ctrl-[")]);
 
+    // Editable code editor display bindings
+    app.register_editable_bindings([
+        EditableBinding::new(
+            "code_editor:show_line_numbers",
+            "Show code editor line numbers",
+            CodeEditorViewAction::SetLineNumbersVisible(true),
+        )
+        .with_context_predicate(text_entry.clone()),
+        EditableBinding::new(
+            "code_editor:hide_line_numbers",
+            "Hide code editor line numbers",
+            CodeEditorViewAction::SetLineNumbersVisible(false),
+        )
+        .with_context_predicate(text_entry.clone()),
+        EditableBinding::new(
+            "code_editor:show_absolute_line_numbers",
+            "Show absolute line numbers in code editor",
+            CodeEditorViewAction::SetLineNumberMode(CodeEditorLineNumberMode::Absolute),
+        )
+        .with_context_predicate(text_entry.clone()),
+        EditableBinding::new(
+            "code_editor:show_relative_line_numbers",
+            "Show relative line numbers in code editor",
+            CodeEditorViewAction::SetLineNumberMode(CodeEditorLineNumberMode::Relative),
+        )
+        .with_context_predicate(text_entry.clone()),
+        EditableBinding::new(
+            "code_editor:enable_soft_wrap",
+            "Enable code editor soft wrap",
+            CodeEditorViewAction::SetSoftWrap(true),
+        )
+        .with_context_predicate(text_entry.clone()),
+        EditableBinding::new(
+            "code_editor:disable_soft_wrap",
+            "Disable code editor soft wrap",
+            CodeEditorViewAction::SetSoftWrap(false),
+        )
+        .with_context_predicate(text_entry.clone()),
+    ]);
+
     // Editable Find Bar keybindings
     app.register_editable_bindings([EditableBinding::new(
         "code_editor:find",
@@ -715,9 +776,14 @@ pub enum CodeEditorViewAction {
     VimEnter,
     VimTab,
     VimDelete,
+    VimMoveLineBlockDown,
+    VimMoveLineBlockUp,
     VimShiftTab,
     VimShiftEnter,
     VimEscape,
+    SetLineNumbersVisible(bool),
+    SetLineNumberMode(CodeEditorLineNumberMode),
+    SetSoftWrap(bool),
 }
 
 impl CodeEditorViewAction {
@@ -757,6 +823,8 @@ impl CodeEditorViewAction {
             | Self::VimEnter
             | Self::VimTab
             | Self::VimDelete
+            | Self::VimMoveLineBlockDown
+            | Self::VimMoveLineBlockUp
             | Self::VimShiftTab
             | Self::VimShiftEnter
             | Self::VimEscape => false,
@@ -796,6 +864,9 @@ impl CodeEditorViewAction {
             | Self::ShowFindBar
             | Self::ShowGoToLine
             | Self::Escape
+            | Self::SetLineNumbersVisible(_)
+            | Self::SetLineNumberMode(_)
+            | Self::SetSoftWrap(_)
             | Self::HiddenSectionExpansion { .. }
             | Self::AddDiffHunkContext { .. }
             | Self::RevertDiffHunk { .. }
@@ -838,6 +909,12 @@ impl TypedActionView for CodeEditorView {
             ToggleDiffNav(line_range) => self.toggle_diff_nav(line_range.clone(), ctx),
             Enter => self.model.update(ctx, |model, ctx| model.enter(ctx)),
             VimEnter => self.vim_keystroke(&Keystroke::parse("enter").expect("enter parses"), ctx),
+            VimMoveLineBlockDown => {
+                self.vim_keystroke(&Keystroke::parse("alt-j").expect("alt-j parses"), ctx)
+            }
+            VimMoveLineBlockUp => {
+                self.vim_keystroke(&Keystroke::parse("alt-k").expect("alt-k parses"), ctx)
+            }
             Delete => self.model.update(ctx, |model, ctx| {
                 model.delete(TextDirection::Forwards, TextUnit::Character, false, ctx);
             }),
@@ -1043,6 +1120,11 @@ impl TypedActionView for CodeEditorView {
             ShowFindBar => self.show_find_bar(ctx),
             ShowGoToLine => self.show_goto_line(ctx),
             Escape => self.escape(ctx),
+            SetLineNumbersVisible(show_line_numbers) => {
+                self.set_code_editor_line_numbers_visible(*show_line_numbers, ctx)
+            }
+            SetLineNumberMode(mode) => self.set_code_editor_line_number_mode(*mode, ctx),
+            SetSoftWrap(soft_wrap) => self.set_code_editor_soft_wrap(*soft_wrap, ctx),
             HiddenSectionExpansion {
                 line_range,
                 expansion_type,
