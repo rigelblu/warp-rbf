@@ -22,7 +22,6 @@ use warp_util::path::{CleanPathResult, LineAndColumnArg};
 use warpui::clipboard::ClipboardContent;
 use warpui::{AppContext, SingletonEntity, ViewContext};
 
-use crate::TelemetryEvent;
 #[cfg(not(target_family = "wasm"))]
 use crate::ai::agent::conversation::AIConversationId;
 #[cfg(not(target_family = "wasm"))]
@@ -32,7 +31,7 @@ use crate::ai::agent_management::telemetry::AgentManagementTelemetryEvent;
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use crate::ai::ambient_agents::telemetry::HandoffEntryPoint;
 use crate::ai::blocklist::agent_view::{
-    AgentViewEntryOrigin, DismissalStrategy, ENTER_OR_EXIT_CONFIRMATION_WINDOW, EphemeralMessage,
+    AgentViewEntryOrigin, DismissalStrategy, EphemeralMessage, ENTER_OR_EXIT_CONFIRMATION_WINDOW,
 };
 #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
 use crate::ai::blocklist::handoff::PendingCloudLaunch;
@@ -43,8 +42,8 @@ use crate::ai::blocklist::{
 use crate::ai::conversation_rename::rename_conversation;
 use crate::cloud_object::model::persistence::CloudModel;
 use crate::code_review::telemetry_event::CodeReviewPaneEntrypoint;
-use crate::search::slash_command_menu::static_commands::Availability;
 use crate::search::slash_command_menu::static_commands::commands::{self, COMMAND_REGISTRY};
+use crate::search::slash_command_menu::static_commands::Availability;
 use crate::search::slash_command_menu::{SlashCommandId, StaticCommand};
 use crate::server::ids::SyncId;
 use crate::server::telemetry::SlashCommandAcceptedDetails;
@@ -70,6 +69,7 @@ use crate::workspace::tab_settings::{
     TabColorSlot, TabColorSlotLabelError, TabColorSlotLabels, TabSettings,
 };
 use crate::workspace::{ForkedConversationDestination, ToastStack, WorkspaceAction};
+use crate::TelemetryEvent;
 
 #[derive(Debug, Clone)]
 pub enum AcceptSlashCommandOrSavedPrompt {
@@ -148,13 +148,8 @@ fn parse_name_window_argument(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RenameTabColorCommandArgument {
-    Set {
-        slot: TabColorSlot,
-        label: String,
-    },
-    Clear {
-        slot: TabColorSlot,
-    },
+    Set { slot: TabColorSlot, label: String },
+    Clear { slot: TabColorSlot },
 }
 
 fn trim_wrapping_quotes(label: &str) -> &str {
@@ -190,13 +185,12 @@ fn parse_rename_tab_color_argument(
     let mut parts = raw.splitn(2, char::is_whitespace);
     let slot_arg = parts.next().unwrap_or_default();
     let rest = parts.next().map(str::trim).unwrap_or_default();
-    let slot = TabColorSlot::parse(slot_arg, allowed_colors)
-        .ok_or_else(|| {
-            format!(
-                "Unknown tab color '{slot_arg}'. Use one of: {}.",
-                supported_tab_color_options()
-            )
-        })?;
+    let slot = TabColorSlot::parse(slot_arg, allowed_colors).ok_or_else(|| {
+        format!(
+            "Unknown tab color '{slot_arg}'. Use one of: {}.",
+            supported_tab_color_options()
+        )
+    })?;
 
     if rest.eq_ignore_ascii_case("--clear") {
         return Ok(RenameTabColorCommandArgument::Clear { slot });
