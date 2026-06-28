@@ -6,6 +6,12 @@ title: Changelog
 
 ---
 
+# 🔵⋯ v0.13.0 (2026-06-30)
+## 🟠⋯ Added
+- 2026-06-30 - feat (user need) | distribute active tab panes evenly along the horizontal or vertical axis to quickly balance your workspace layout (#warp-48)
+
+---
+
 # 🔵⋯ v0.12.0 (2026-06-30)
 ## 🟠⋯ Added
 - 2026-06-30 - feat (user need) | move the current line or visual-line selection up/down with the Vim shortcuts Option/Meta+j/k to easily reorder code blocks (#warp-43)

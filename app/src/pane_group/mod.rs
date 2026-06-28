@@ -294,6 +294,8 @@ pub enum PaneGroupAction {
     ResizeMove(Vector2F),
     StartResizing(DraggedBorder),
     ResetPaneSizes(EntityId),
+    DistributePaneWidths,
+    DistributePaneHeights,
     Move {
         id: PaneId,
         target_pane_id: PaneId,
@@ -473,6 +475,25 @@ pub fn init(app: &mut AppContext) {
             id!("PaneGroup") & !id!("PaneGroup_PaneMaximized") & !id!("PaneGroup_PaneDragging"),
         )
         .with_mac_key_binding("meta-shift-E"),
+    ]);
+
+    app.register_editable_bindings([
+        EditableBinding::new(
+            "pane_group:distribute_pane_widths",
+            "Distribute pane widths",
+            PaneGroupAction::DistributePaneWidths,
+        )
+        .with_context_predicate(
+            id!("PaneGroup") & !id!("PaneGroup_PaneMaximized") & !id!("PaneGroup_PaneDragging"),
+        ),
+        EditableBinding::new(
+            "pane_group:distribute_pane_heights",
+            "Distribute pane heights",
+            PaneGroupAction::DistributePaneHeights,
+        )
+        .with_context_predicate(
+            id!("PaneGroup") & !id!("PaneGroup_PaneMaximized") & !id!("PaneGroup_PaneDragging"),
+        ),
     ]);
 
     // Register bindings to resize a pane. We only set bindings on Mac because there isn't an
@@ -5959,6 +5980,15 @@ impl PaneGroup {
         }
     }
 
+    pub fn distribute_pane_sizes(&mut self, axis: SplitDirection, ctx: &mut ViewContext<Self>) {
+        self.dragged_border = None;
+        if self.panes.distribute_pane_sizes(axis) {
+            self.clear_hidden_closed_panes(ctx);
+            ctx.notify();
+            ctx.emit(Event::AppStateChanged);
+        }
+    }
+
     pub fn end_resizing(&mut self, ctx: &mut ViewContext<Self>) {
         self.dragged_border = None;
         ctx.emit(Event::AppStateChanged);
@@ -8032,6 +8062,8 @@ impl TypedActionView for PaneGroup {
             ResizeMove(position) => self.maybe_resize_pane(*position, ctx),
             StartResizing(border) => self.start_resizing(*border, ctx),
             ResetPaneSizes(border_id) => self.reset_pane_sizes(*border_id, ctx),
+            DistributePaneWidths => self.distribute_pane_sizes(SplitDirection::Horizontal, ctx),
+            DistributePaneHeights => self.distribute_pane_sizes(SplitDirection::Vertical, ctx),
             EndResizing => self.end_resizing(ctx),
             ResizeLeft => self.resize_left(ctx),
             ResizeRight => self.resize_right(ctx),
