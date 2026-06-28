@@ -622,6 +622,10 @@ impl PaneData {
         self.root.reset_pane_sizes(border_id)
     }
 
+    pub fn distribute_pane_sizes(&mut self, axis: SplitDirection) -> bool {
+        self.root.distribute_pane_sizes(axis, &self.hidden_panes)
+    }
+
     pub fn adjust_pane_size_by_id(
         &mut self,
         pane_id: PaneId,
@@ -874,6 +878,13 @@ impl PaneNode {
         match self {
             PaneNode::Leaf(_) => false,
             PaneNode::Branch(branch) => branch.reset_pane_sizes(border_id),
+        }
+    }
+
+    fn distribute_pane_sizes(&mut self, axis: SplitDirection, hidden_panes: &[HiddenPane]) -> bool {
+        match self {
+            PaneNode::Leaf(_) => false,
+            PaneNode::Branch(branch) => branch.distribute_pane_sizes(axis, hidden_panes),
         }
     }
 
@@ -1399,6 +1410,31 @@ impl PaneBranch {
         }
 
         false
+    }
+
+    fn distribute_pane_sizes(&mut self, axis: SplitDirection, hidden_panes: &[HiddenPane]) -> bool {
+        let mut changed = false;
+
+        if self.axis == axis {
+            for (flex, node) in &mut self.nodes {
+                if railed_pane_ids(node, hidden_panes).is_some() {
+                    continue;
+                }
+
+                if (flex.0 - DEFAULT_FLEX_VALUE).abs() > f32::EPSILON {
+                    *flex = DEFAULT_FLEX_SIZE;
+                    changed = true;
+                }
+
+                changed |= node.distribute_pane_sizes(axis, hidden_panes);
+            }
+        } else {
+            for (_, node) in &mut self.nodes {
+                changed |= node.distribute_pane_sizes(axis, hidden_panes);
+            }
+        }
+
+        changed
     }
 
     // Get the size of a branch by recursively adding the size of its children.
