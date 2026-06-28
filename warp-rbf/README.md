@@ -34,6 +34,10 @@ This is my ~~fork~~ flavour of [Warp](https://github.com/warpdotdev/Warp), simil
 — Tuck a pane you're not using to a thin edge rail to reclaim its space without closing it.
 - `meta-shift-hjkl` rails the bordering pane · `meta-shift-E` expands the focused pane · click the rail or the opposite key restores
 
+**Distribute active tab panes evenly**
+— Reset the widths or heights of all active panes in a tab so they are sized equally.
+- Command Palette (`cmd-shift-p`) has entries for `Distribute pane widths` and `Distribute pane heights` to re-balance the layout
+
 **Colored tabs contrast improvements**
 - Tell inactive tab colors apart, and see which colored tab is active at a glance.
 

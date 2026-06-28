@@ -822,6 +822,205 @@ fn test_reset_pane_sizes_only_resets_containing_branch() {
     );
 }
 
+#[test]
+fn test_distribute_pane_widths_resets_horizontal_branches() {
+    let panes = [
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+    ];
+    let mut tree = PaneData::new(panes[0]);
+
+    tree.split(panes[0], panes[1], Direction::Right);
+    tree.split(panes[1], panes[2], Direction::Right);
+
+    let root = match &mut tree.root {
+        PaneNode::Branch(root) => root,
+        PaneNode::Leaf(_) => panic!("Should be a branch"),
+    };
+    root.nodes[0].0 = PaneFlex(0.2);
+    root.nodes[1].0 = PaneFlex(0.5);
+    root.nodes[2].0 = PaneFlex(0.3);
+
+    assert!(tree.distribute_pane_sizes(SplitDirection::Horizontal));
+
+    let root = tree.root.as_branch().expect("Should be a branch");
+    assert_eq!(
+        root.nodes
+            .iter()
+            .map(|(flex, _)| flex.0)
+            .collect::<Vec<_>>(),
+        vec![DEFAULT_FLEX_VALUE, DEFAULT_FLEX_VALUE, DEFAULT_FLEX_VALUE]
+    );
+}
+
+#[test]
+fn test_distribute_pane_heights_resets_vertical_branches() {
+    let panes = [
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+    ];
+    let mut tree = PaneData::new(panes[0]);
+
+    tree.split(panes[0], panes[1], Direction::Down);
+    tree.split(panes[1], panes[2], Direction::Down);
+
+    let root = match &mut tree.root {
+        PaneNode::Branch(root) => root,
+        PaneNode::Leaf(_) => panic!("Should be a branch"),
+    };
+    root.nodes[0].0 = PaneFlex(0.2);
+    root.nodes[1].0 = PaneFlex(0.5);
+    root.nodes[2].0 = PaneFlex(0.3);
+
+    assert!(tree.distribute_pane_sizes(SplitDirection::Vertical));
+
+    let root = tree.root.as_branch().expect("Should be a branch");
+    assert_eq!(
+        root.nodes
+            .iter()
+            .map(|(flex, _)| flex.0)
+            .collect::<Vec<_>>(),
+        vec![DEFAULT_FLEX_VALUE, DEFAULT_FLEX_VALUE, DEFAULT_FLEX_VALUE]
+    );
+}
+
+#[test]
+fn test_distribute_pane_sizes_recurses_into_matching_axis_descendants() {
+    let panes = [
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+    ];
+    let mut tree = PaneData::new(panes[0]);
+
+    tree.split(panes[0], panes[1], Direction::Down);
+    tree.split(panes[1], panes[2], Direction::Right);
+
+    let root = match &mut tree.root {
+        PaneNode::Branch(root) => root,
+        PaneNode::Leaf(_) => panic!("Should be a branch"),
+    };
+    root.nodes[0].0 = PaneFlex(0.25);
+    root.nodes[1].0 = PaneFlex(0.75);
+
+    let nested = match &mut root.nodes[1].1 {
+        PaneNode::Branch(nested) => nested,
+        PaneNode::Leaf(_) => panic!("Should be a branch"),
+    };
+    nested.nodes[0].0 = PaneFlex(0.8);
+    nested.nodes[1].0 = PaneFlex(0.2);
+
+    assert!(tree.distribute_pane_sizes(SplitDirection::Horizontal));
+
+    let root = tree.root.as_branch().expect("Should be a branch");
+    assert_eq!(
+        root.nodes
+            .iter()
+            .map(|(flex, _)| flex.0)
+            .collect::<Vec<_>>(),
+        vec![0.25, 0.75]
+    );
+    let nested = root.node(1).as_branch().expect("Should be a branch");
+    assert_eq!(
+        nested
+            .nodes
+            .iter()
+            .map(|(flex, _)| flex.0)
+            .collect::<Vec<_>>(),
+        vec![DEFAULT_FLEX_VALUE, DEFAULT_FLEX_VALUE]
+    );
+}
+
+#[test]
+fn test_distribute_pane_sizes_preserves_opposite_axis_branch_ratios() {
+    let panes = [
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+    ];
+    let mut tree = PaneData::new(panes[0]);
+
+    tree.split(panes[0], panes[1], Direction::Right);
+    tree.split(panes[1], panes[2], Direction::Down);
+
+    let root = match &mut tree.root {
+        PaneNode::Branch(root) => root,
+        PaneNode::Leaf(_) => panic!("Should be a branch"),
+    };
+    root.nodes[0].0 = PaneFlex(0.2);
+    root.nodes[1].0 = PaneFlex(0.8);
+
+    let nested = match &mut root.nodes[1].1 {
+        PaneNode::Branch(nested) => nested,
+        PaneNode::Leaf(_) => panic!("Should be a branch"),
+    };
+    nested.nodes[0].0 = PaneFlex(0.9);
+    nested.nodes[1].0 = PaneFlex(0.1);
+
+    assert!(tree.distribute_pane_sizes(SplitDirection::Horizontal));
+
+    let root = tree.root.as_branch().expect("Should be a branch");
+    assert_eq!(
+        root.nodes
+            .iter()
+            .map(|(flex, _)| flex.0)
+            .collect::<Vec<_>>(),
+        vec![DEFAULT_FLEX_VALUE, DEFAULT_FLEX_VALUE]
+    );
+    let nested = root.node(1).as_branch().expect("Should be a branch");
+    assert_eq!(
+        nested
+            .nodes
+            .iter()
+            .map(|(flex, _)| flex.0)
+            .collect::<Vec<_>>(),
+        vec![0.9, 0.1]
+    );
+}
+
+#[test]
+fn test_distribute_pane_sizes_keeps_collapsed_rails_fixed() {
+    let panes = [
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+        PaneId::dummy_pane_id(),
+    ];
+    let mut tree = PaneData::new(panes[0]);
+
+    tree.split(panes[0], panes[1], Direction::Right);
+    tree.split(panes[1], panes[2], Direction::Right);
+
+    let root = match &mut tree.root {
+        PaneNode::Branch(root) => root,
+        PaneNode::Leaf(_) => panic!("Should be a branch"),
+    };
+    root.nodes[0].0 = PaneFlex(0.2);
+    root.nodes[1].0 = PaneFlex(0.5);
+    root.nodes[2].0 = PaneFlex(0.3);
+
+    assert!(tree.collapse_pane(panes[1]));
+    assert!(tree.distribute_pane_sizes(SplitDirection::Horizontal));
+
+    let root = tree.root.as_branch().expect("Should be a branch");
+    assert_eq!(
+        root.nodes
+            .iter()
+            .map(|(flex, _)| flex.0)
+            .collect::<Vec<_>>(),
+        vec![DEFAULT_FLEX_VALUE, 0.5, DEFAULT_FLEX_VALUE]
+    );
+    assert_eq!(tree.collapsed_pane_ids(), vec![panes[1]]);
+}
+
+#[test]
+fn test_distribute_pane_sizes_noops_for_leaf() {
+    let mut tree = PaneData::new(PaneId::dummy_pane_id());
+
+    assert!(!tree.distribute_pane_sizes(SplitDirection::Horizontal));
+}
+
 // ---- #warp-03: resize across a collapsed rail (skip rails, keep them fixed) ----
 
 #[test]
