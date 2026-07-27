@@ -329,6 +329,13 @@ elif [[ $RELEASE_CHANNEL = "oss" ]]; then
     # The OSS channel does not ship Sentry, so drop the cocoa_sentry feature
     # (which would otherwise pull in the Sentry framework dependency).
     FEATURES="release_bundle,extern_plist"
+    # Enable the Warp Control CLI wrapper for local scripting/automation.
+    # This feature does two things, and both are required: it turns on
+    # `FeatureFlag::WarpControlCli` (app/src/features.rs), AND it gates the
+    # step further down that writes `Resources/bin/warpctrl-oss`. Enabling the
+    # runtime flag alone renders a Settings > Scripting page whose install
+    # button can never succeed.
+    FEATURES="$FEATURES,warp_control_cli"
 fi
 
 OUT_DIR="target/$TARGET_PROFILE_DIR/bundle/osx"
