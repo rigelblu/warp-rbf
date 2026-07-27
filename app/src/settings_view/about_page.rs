@@ -70,7 +70,7 @@ impl SettingsWidget for AboutPageWidget {
             "bundled/svg/warp-logo-with-dark-title.svg"
         };
 
-        let rbf_version = include_str!("../../../warp-rbf/RBF_VERSION").trim();
+        let rbf_version = include_str!("../../../rbf/RBF_VERSION").trim();
         let rbf_version_text = format!("Warp RBF v{rbf_version}");
         let (warp_version_label, warp_version_copy_text) = warp_version_text();
 
