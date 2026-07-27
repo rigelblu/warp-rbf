@@ -5638,7 +5638,7 @@ impl Workspace {
                 return;
             };
             pane.pane_configuration().update(ctx, |configuration, ctx| {
-                configuration.set_custom_vertical_tabs_title(title, ctx);
+                configuration.set_custom_name(title, ctx);
             });
             ctx.emit(pane_group::Event::AppStateChanged);
         });
@@ -5655,12 +5655,71 @@ impl Workspace {
                 return;
             };
             pane.pane_configuration().update(ctx, |configuration, ctx| {
-                configuration.clear_custom_vertical_tabs_title(ctx);
+                configuration.clear_custom_name(ctx);
             });
             ctx.emit(pane_group::Event::AppStateChanged);
         });
         ctx.dispatch_global_action("workspace:save_app", ());
         ctx.notify();
+    }
+
+    /// Resolves a pane to the locator its owning tab needs.
+    ///
+    /// `SetPaneName` carries a bare `PaneId` because `PaneGroupFocusState` does
+    /// not know its own group id, so the owning tab is found by scanning here.
+    /// `PaneId` wraps a globally-unique `EntityId`, so the scan cannot match the
+    /// wrong tab's pane.
+    ///
+    /// `None` means the submitting surface had no pane handle yet — fall back to
+    /// the focused pane, since a rename that lands somewhere beats one that
+    /// vanishes. A `Some` naming a pane that no longer exists returns `None`
+    /// rather than falling back, because renaming an unrelated pane is worse
+    /// than doing nothing.
+    fn locate_pane(&self, pane_id: Option<PaneId>, ctx: &AppContext) -> Option<PaneViewLocator> {
+        let Some(pane_id) = pane_id else {
+            let pane_group = self.active_tab_pane_group();
+            return Some(PaneViewLocator {
+                pane_group_id: pane_group.id(),
+                pane_id: pane_group.as_ref(ctx).focused_pane_id(ctx),
+            });
+        };
+
+        self.tabs.iter().find_map(|tab| {
+            tab.pane_group
+                .as_ref(ctx)
+                .pane_by_id(pane_id)
+                .map(|_| PaneViewLocator {
+                    pane_group_id: tab.pane_group.id(),
+                    pane_id,
+                })
+        })
+    }
+
+    /// Sets or clears a pane's custom name outright, with no inline editor —
+    /// the `/rename-pane` path.
+    fn set_pane_name(
+        &mut self,
+        pane_id: Option<PaneId>,
+        name: Option<String>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(locator) = self.locate_pane(pane_id, ctx) else {
+            log::warn!("Tried to rename a pane that is not in any tab");
+            return;
+        };
+
+        // `SetPaneName` is in `should_save_app_state_on_action`'s true list, so
+        // the dispatcher persists app state once this handler returns and the
+        // set path needs no explicit save. The clear path saves twice —
+        // `clear_pane_name` dispatches its own, which predates this action and
+        // is shared with `ResetPaneName`. Redundant, not harmful.
+        match name {
+            Some(name) => {
+                self.set_custom_pane_name(locator, name, ctx);
+                ctx.notify();
+            }
+            None => self.clear_pane_name(locator, ctx),
+        }
     }
 
     pub fn rename_pane(&mut self, locator: PaneViewLocator, ctx: &mut ViewContext<Self>) {
@@ -5681,17 +5740,12 @@ impl Workspace {
             .map(|pane| {
                 let configuration = pane.pane_configuration();
                 let configuration = configuration.as_ref(ctx);
-                configuration
-                    .custom_vertical_tabs_title()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| {
-                        let title = configuration.title().trim();
-                        if title.is_empty() {
-                            "Untitled pane".to_string()
-                        } else {
-                            title.to_string()
-                        }
-                    })
+                let name = configuration.display_name().trim();
+                if name.is_empty() {
+                    "Untitled pane".to_string()
+                } else {
+                    name.to_string()
+                }
             })
         else {
             log::warn!("Tried to rename a missing pane");
@@ -23333,6 +23387,7 @@ impl TypedActionView for Workspace {
             ResetTabName(index) => self.clear_tab_name(*index, ctx),
             RenamePane(locator) => self.rename_pane(*locator, ctx),
             ResetPaneName(locator) => self.clear_pane_name(*locator, ctx),
+            SetPaneName { pane_id, name } => self.set_pane_name(*pane_id, name.clone(), ctx),
             RenameActiveTab => self.rename_tab(self.active_tab_index, ctx),
             RenameActivePane => {
                 let pane_group = self.active_tab_pane_group().clone();

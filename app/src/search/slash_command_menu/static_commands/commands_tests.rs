@@ -27,6 +27,26 @@ fn rename_tab_command_requires_argument() {
 }
 
 #[test]
+fn rename_pane_command_requires_argument() {
+    let command = COMMAND_REGISTRY
+        .get_command_with_name(RENAME_PANE.name)
+        .expect("expected /rename-pane to be registered");
+    let argument = command
+        .argument
+        .as_ref()
+        .expect("expected /rename-pane to require an argument");
+
+    assert_eq!(command.name, "/rename-pane");
+    assert_eq!(command.icon_path, "bundled/svg/pencil-line.svg");
+    assert_eq!(command.availability, Availability::ALWAYS);
+    assert!(!command.auto_enter_ai_mode);
+    assert!(!argument.is_optional);
+    assert!(!argument.should_execute_on_selection);
+    // Matches `/name-window`'s hint exactly — same shape, same ladder.
+    assert_eq!(argument.hint_text, Some("<name | --clear>"));
+}
+
+#[test]
 fn name_window_command_requires_argument() {
     let command = COMMAND_REGISTRY
         .get_command_with_name(NAME_WINDOW.name)

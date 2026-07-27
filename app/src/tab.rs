@@ -377,10 +377,7 @@ impl TabData {
         pane_group.pane_by_id(pane_id).and_then(|pane| {
             let configuration = pane.pane_configuration();
             let configuration = configuration.as_ref(ctx);
-            let title = configuration
-                .custom_vertical_tabs_title()
-                .unwrap_or_else(|| configuration.title());
-            Self::copyable_metadata_value(Some(title.to_string()))
+            Self::copyable_metadata_value(Some(configuration.display_name().to_string()))
         })
     }
 
@@ -544,10 +541,7 @@ impl TabData {
             return vec![];
         };
         let configuration = pane.pane_configuration();
-        let has_custom_name = configuration
-            .as_ref(ctx)
-            .custom_vertical_tabs_title()
-            .is_some();
+        let has_custom_name = configuration.as_ref(ctx).custom_name().is_some();
 
         let mut menu_items = vec![MenuItemFields::new(target.rename_label)
             .with_on_select_action(WorkspaceAction::RenamePane(target.locator))

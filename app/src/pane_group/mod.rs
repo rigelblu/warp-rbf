@@ -2067,7 +2067,7 @@ impl PaneGroup {
                     pane.as_pane()
                         .pane_configuration()
                         .update(ctx, |configuration, ctx| {
-                            configuration.set_custom_vertical_tabs_title(title, ctx);
+                            configuration.set_custom_name(title, ctx);
                         });
                 }
             }
@@ -2137,7 +2137,7 @@ impl PaneGroup {
                                 pane.as_pane().pane_configuration().update(
                                     ctx,
                                     |configuration, ctx| {
-                                        configuration.set_custom_vertical_tabs_title(title, ctx);
+                                        configuration.set_custom_name(title, ctx);
                                     },
                                 );
                             }
@@ -2227,12 +2227,16 @@ impl PaneGroup {
                         snapshot.is_active = true;
                     }
                 }
+                // `custom_name()`, never `display_name()` — this is the save
+                // path. Persisting the resolved name would write whatever the
+                // shell happened to report into the custom-name column, where
+                // it would freeze as a name the user never chose.
                 let custom_vertical_tabs_title =
                     self.pane_contents.get(&snapshot_pane_id).and_then(|pane| {
                         pane.as_pane()
                             .pane_configuration()
                             .as_ref(app)
-                            .custom_vertical_tabs_title()
+                            .custom_name()
                             .map(str::to_owned)
                     });
                 PaneNodeSnapshot::Leaf(LeafSnapshot {

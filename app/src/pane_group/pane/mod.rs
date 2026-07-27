@@ -690,7 +690,10 @@ where
 pub struct PaneConfiguration {
     title: String,
     title_secondary: String,
-    custom_vertical_tabs_title: Option<String>,
+    /// A user-chosen name that overrides [`Self::title`] wherever the pane's
+    /// name is displayed. Resolved at read time by [`Self::display_name`] —
+    /// never written into `title`, which the terminal overwrites continuously.
+    custom_name: Option<String>,
     show_active_pane_indicator: bool,
 
     /// If true, we draw an accent border around the pane.
@@ -717,7 +720,7 @@ impl PaneConfiguration {
         Self {
             title: title.into(),
             title_secondary: String::from(""),
-            custom_vertical_tabs_title: None,
+            custom_name: None,
             show_active_pane_indicator: false,
             show_accent_border: false,
             has_open_modal: false,
@@ -734,8 +737,27 @@ impl PaneConfiguration {
         &self.title_secondary
     }
 
-    pub fn custom_vertical_tabs_title(&self) -> Option<&str> {
-        self.custom_vertical_tabs_title.as_deref()
+    /// The name to show for this pane: the user's custom name when one is set,
+    /// otherwise the live title the terminal reports.
+    ///
+    /// Every surface that displays a pane's name resolves through here, so one
+    /// rename is visible everywhere at once. Do not rebuild this from
+    /// [`Self::custom_name`] at a call site — a second resolution path is what
+    /// made a renamed pane show its name in the vertical tabs panel and not on
+    /// the pane itself.
+    pub fn display_name(&self) -> &str {
+        self.custom_name.as_deref().unwrap_or(&self.title)
+    }
+
+    /// The name the user assigned, or `None` when this pane was never renamed.
+    ///
+    /// For persistence and round-tripping only — this is what gets written to
+    /// [`LeafSnapshot`], where storing a live title would freeze it as a custom
+    /// name forever. Displaying this instead of [`Self::display_name`] is a bug.
+    ///
+    /// [`LeafSnapshot`]: crate::app_state::LeafSnapshot
+    pub fn custom_name(&self) -> Option<&str> {
+        self.custom_name.as_deref()
     }
 
     pub fn dim_even_if_focused(&self) -> bool {
@@ -774,24 +796,31 @@ impl PaneConfiguration {
         }
     }
 
-    pub fn set_custom_vertical_tabs_title(
-        &mut self,
-        title: impl Into<String>,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        let title = title.into();
-        let title = title.trim();
-        let title = (!title.is_empty()).then(|| title.to_string());
-        if self.custom_vertical_tabs_title != title {
-            self.custom_vertical_tabs_title = title;
-            ctx.emit(PaneConfigurationEvent::VerticalTabsTitleUpdated);
+    pub fn set_custom_name(&mut self, name: impl Into<String>, ctx: &mut ModelContext<Self>) {
+        let name = name.into();
+        let name = name.trim();
+        let name = (!name.is_empty()).then(|| name.to_string());
+        if self.custom_name != name {
+            self.custom_name = name;
+            self.emit_name_changed(ctx);
         }
     }
 
-    pub fn clear_custom_vertical_tabs_title(&mut self, ctx: &mut ModelContext<Self>) {
-        if self.custom_vertical_tabs_title.take().is_some() {
-            ctx.emit(PaneConfigurationEvent::VerticalTabsTitleUpdated);
+    pub fn clear_custom_name(&mut self, ctx: &mut ModelContext<Self>) {
+        if self.custom_name.take().is_some() {
+            self.emit_name_changed(ctx);
         }
+    }
+
+    /// The custom name feeds two surfaces, and they listen to different events.
+    /// The vertical tabs row wants `VerticalTabsTitleUpdated`; the pane header
+    /// re-renders *only* on `HeaderContentChanged` (see
+    /// `PaneHeader::handle_pane_state_event`). Emitting one without the other
+    /// leaves a renamed pane showing its old name until something unrelated
+    /// dirties it.
+    fn emit_name_changed(&self, ctx: &mut ModelContext<Self>) {
+        ctx.emit(PaneConfigurationEvent::VerticalTabsTitleUpdated);
+        ctx.emit(PaneConfigurationEvent::HeaderContentChanged);
     }
 
     pub fn set_dim_even_if_focused(

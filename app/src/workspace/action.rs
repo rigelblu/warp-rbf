@@ -29,7 +29,7 @@ use crate::auth::auth_manager::LoginGatedFeature;
 use crate::drive::items::WarpDriveItemId;
 use crate::drive::CloudObjectTypeAndId;
 use crate::palette::PaletteMode;
-use crate::pane_group::PaneGroup;
+use crate::pane_group::{PaneGroup, PaneId};
 use crate::prompt::editor_modal::OpenSource as PromptEditorOpenSource;
 use crate::search;
 use crate::server::ids::SyncId;
@@ -140,6 +140,19 @@ pub enum WorkspaceAction {
     ResetTabName(usize),
     RenamePane(PaneViewLocator),
     ResetPaneName(PaneViewLocator),
+    /// Sets (`Some`) or clears (`None`) a pane's custom name outright, with no
+    /// inline editor — the `/rename-pane` path.
+    ///
+    /// `pane_id` is the pane the command was *submitted from*, not the focused
+    /// one. The two normally agree, but focus can move between submit and
+    /// handling, and since #warp-49 puts the name on the pane header a
+    /// mis-target is something the user watches happen to the wrong pane.
+    /// `None` when the submitting surface has no pane handle yet; the handler
+    /// falls back to the focused pane rather than dropping the rename.
+    SetPaneName {
+        pane_id: Option<PaneId>,
+        name: Option<String>,
+    },
     RenameActiveTab,
     /// Renames the focused pane in the active tab. Mirrors `RenameActiveTab`
     /// so the action is reachable from the binding registry / Command Palette
@@ -913,6 +926,7 @@ impl WorkspaceAction {
             | ResetTabName(_)
             | RenamePane(_)
             | ResetPaneName(_)
+            | SetPaneName { .. }
             | RenameActiveTab
             | RenameActivePane
             | SetActiveTabName(_)

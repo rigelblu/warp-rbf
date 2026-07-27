@@ -711,6 +711,103 @@ impl pane::PaneContent for PreAttachReturnsFalsePane {
 //     });
 // }
 
+/// #warp-49: the snapshot is the *save* path, so it must persist the name the
+/// user assigned — never the resolved one. Wiring it to `display_name()` would
+/// write whatever the shell last reported into the custom-name column, freezing
+/// a name the user never chose. That break is invisible to any check that
+/// writes and reads back on the same build, which is why it is asserted here
+/// rather than left to a restart.
+#[test]
+fn test_snapshot_persists_only_user_assigned_pane_names() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let pane_group = mock_pane_group(&mut app, Default::default());
+
+        pane_group.update(&mut app, |panes, ctx| {
+            let pane_id = get_newly_created_pane_id(panes, &[]);
+            let configuration = panes
+                .pane_by_id(pane_id)
+                .expect("mock pane group should have a pane")
+                .pane_configuration()
+                .clone();
+
+            // A pane nobody renamed has a live title and no custom name.
+            configuration.update(ctx, |configuration, ctx| {
+                configuration.set_title("zsh", ctx);
+            });
+            assert_eq!(snapshot_custom_name(panes, ctx), None);
+
+            // Only a rename puts a name in the snapshot.
+            configuration.update(ctx, |configuration, ctx| {
+                configuration.set_custom_name("API server", ctx);
+            });
+            assert_eq!(
+                snapshot_custom_name(panes, ctx),
+                Some("API server".to_owned())
+            );
+
+            // Clearing takes it back out, rather than persisting the live title.
+            configuration.update(ctx, |configuration, ctx| {
+                configuration.clear_custom_name(ctx);
+            });
+            assert_eq!(snapshot_custom_name(panes, ctx), None);
+        })
+    });
+}
+
+/// #warp-49: `display_name()` is the single resolver every surface reads. The
+/// live title stays available underneath it forever, which is what makes reset
+/// free — the reason the design resolves at read time and never writes the
+/// custom name into `title`.
+#[test]
+fn test_pane_display_name_prefers_custom_name_over_live_title() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let pane_group = mock_pane_group(&mut app, Default::default());
+
+        pane_group.update(&mut app, |panes, ctx| {
+            let pane_id = get_newly_created_pane_id(panes, &[]);
+            let configuration = panes
+                .pane_by_id(pane_id)
+                .expect("mock pane group should have a pane")
+                .pane_configuration()
+                .clone();
+
+            // An unnamed pane is indistinguishable from before this feature.
+            configuration.update(ctx, |configuration, ctx| {
+                configuration.set_title("zsh", ctx);
+            });
+            assert_eq!(configuration.as_ref(ctx).display_name(), "zsh");
+            assert_eq!(configuration.as_ref(ctx).custom_name(), None);
+
+            configuration.update(ctx, |configuration, ctx| {
+                configuration.set_custom_name("API server", ctx);
+            });
+            assert_eq!(configuration.as_ref(ctx).display_name(), "API server");
+
+            // The terminal keeps writing the live title underneath; the custom
+            // name still wins, because resolution happens at read time.
+            configuration.update(ctx, |configuration, ctx| {
+                configuration.set_title("cargo build", ctx);
+            });
+            assert_eq!(configuration.as_ref(ctx).display_name(), "API server");
+
+            // Reset reveals the title that was updating all along.
+            configuration.update(ctx, |configuration, ctx| {
+                configuration.clear_custom_name(ctx);
+            });
+            assert_eq!(configuration.as_ref(ctx).display_name(), "cargo build");
+        })
+    });
+}
+
+fn snapshot_custom_name(panes: &PaneGroup, ctx: &AppContext) -> Option<String> {
+    match panes.snapshot(ctx) {
+        PaneNodeSnapshot::Leaf(leaf) => leaf.custom_vertical_tabs_title,
+        PaneNodeSnapshot::Branch(_) => panic!("expected a single-pane group"),
+    }
+}
+
 #[test]
 #[allow(clippy::clone_on_copy)]
 fn test_pane_focus_on_close() {

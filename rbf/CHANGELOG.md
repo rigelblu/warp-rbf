@@ -6,6 +6,12 @@ title: Changelog
 
 ---
 
+# 🔵⋯ v0.14.0 (2026-07-27)
+## 🟠⋯ Added
+- 2026-07-27 - feat (user need) | name a pane with `/rename-pane <name>` and see that name on the pane itself, not just in the vertical tabs panel, so panes running different jobs are tellable apart at a glance (#warp-49)
+
+---
+
 # 🔵⋯ v0.13.0 (2026-06-30)
 ## 🟠⋯ Added
 - 2026-06-30 - feat (user need) | distribute active tab panes evenly along the horizontal or vertical axis to quickly balance your workspace layout (#warp-48)

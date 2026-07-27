@@ -1298,6 +1298,80 @@ fn test_workspace_sessions_retrieves_tabs() {
     });
 }
 
+/// #warp-49, grill Q5: `/rename-pane` carries the id of the pane it was
+/// submitted *from*, not the focused one. The two normally agree, but focus can
+/// move between submit and handling — and since this feature puts the name on
+/// the pane header, a mis-target stops being an invisible label change and
+/// becomes the wrong pane visibly renaming itself while you watch.
+#[test]
+fn test_set_pane_name_targets_the_named_pane_not_the_focused_one() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let workspace = mock_workspace(&mut app);
+
+        workspace.update(&mut app, |workspace, ctx| {
+            let submitting_pane_id = workspace
+                .get_pane_group_view(0)
+                .map(|tab| tab.read(ctx, |tab, _ctx| tab.pane_id_by_index(0).unwrap()))
+                .expect("tab 0 should exist");
+
+            // Focus somewhere else entirely, so "submitting" and "focused"
+            // cannot be the same pane by accident.
+            workspace.add_terminal_tab(false, ctx);
+            workspace.set_active_tab_index(1, ctx);
+            let focused_pane_id = workspace
+                .active_tab_pane_group()
+                .as_ref(ctx)
+                .focused_pane_id(ctx);
+            assert_ne!(submitting_pane_id, focused_pane_id);
+
+            // The rename reaches across tabs to the pane that submitted it.
+            workspace.set_pane_name(Some(submitting_pane_id), Some("API server".to_owned()), ctx);
+            assert_eq!(
+                pane_custom_name(workspace, submitting_pane_id, ctx),
+                Some("API server".to_owned())
+            );
+            assert_eq!(pane_custom_name(workspace, focused_pane_id, ctx), None);
+
+            // `None` — an input with no pane handle yet — falls back to the
+            // focused pane. A rename that lands somewhere beats one that
+            // vanishes silently.
+            workspace.set_pane_name(None, Some("scratch".to_owned()), ctx);
+            assert_eq!(
+                pane_custom_name(workspace, focused_pane_id, ctx),
+                Some("scratch".to_owned())
+            );
+            assert_eq!(
+                pane_custom_name(workspace, submitting_pane_id, ctx),
+                Some("API server".to_owned())
+            );
+
+            // Clearing is likewise scoped to the pane it names.
+            workspace.set_pane_name(Some(submitting_pane_id), None, ctx);
+            assert_eq!(pane_custom_name(workspace, submitting_pane_id, ctx), None);
+            assert_eq!(
+                pane_custom_name(workspace, focused_pane_id, ctx),
+                Some("scratch".to_owned())
+            );
+        });
+    });
+}
+
+fn pane_custom_name(workspace: &Workspace, pane_id: PaneId, ctx: &AppContext) -> Option<String> {
+    workspace.tabs.iter().find_map(|tab| {
+        tab.pane_group
+            .as_ref(ctx)
+            .pane_by_id(pane_id)
+            .and_then(|pane| {
+                pane.pane_configuration()
+                    .as_ref(ctx)
+                    .custom_name()
+                    .map(str::to_owned)
+            })
+    })
+}
+
 #[test]
 fn test_workspace_sessions_retrieves_panes() {
     App::test((), |mut app| async move {
