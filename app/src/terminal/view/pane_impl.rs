@@ -284,7 +284,10 @@ impl TerminalView {
 
         let appearance = Appearance::as_ref(app);
         let pane_config = self.pane_configuration.as_ref(app);
-        let title = pane_config.title().to_owned();
+        // `display_name()`, not `title()` — a pane the user renamed shows that
+        // name here, which is the whole point of #warp-49. Falls back to the
+        // live terminal title for every pane that was never renamed.
+        let title = pane_config.display_name().to_owned();
         let clip_config = if self.is_using_conversation_for_pane_header_title {
             ClipConfig::ellipsis()
         } else {

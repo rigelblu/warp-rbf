@@ -79,4 +79,19 @@ fn pane_name_actions_save_workspace_state() {
     // same conditions as the locator-based one, since both ultimately drive
     // `rename_pane` which mutates `pane_configuration`.
     assert!(WorkspaceAction::RenameActivePane.should_save_app_state_on_action());
+    // #warp-49: `/rename-pane` sets the name outright with no editor. On the set
+    // path the dispatcher's save is the *only* thing that persists it, because
+    // the handler deliberately does not dispatch `workspace:save_app` itself.
+    // (The clear path also saves inside `clear_pane_name`, which it shares with
+    // `ResetPaneName`.)
+    assert!(WorkspaceAction::SetPaneName {
+        pane_id: Some(locator.pane_id),
+        name: Some("API server".to_owned()),
+    }
+    .should_save_app_state_on_action());
+    assert!(WorkspaceAction::SetPaneName {
+        pane_id: None,
+        name: None,
+    }
+    .should_save_app_state_on_action());
 }

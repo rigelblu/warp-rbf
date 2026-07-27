@@ -146,6 +146,23 @@ fn parse_name_window_argument(
     }
 }
 
+/// Mirrors [`parse_name_window_argument`]'s contract, so `/rename-pane` behaves
+/// like `/name-window` — the sibling command from #warp-06: trimmed name, exact
+/// `--clear` flag, and a blank or missing argument is an error rather than a
+/// clear, because an empty pane header is strictly worse than the live title.
+///
+/// Returns what [`WorkspaceAction::SetPaneName`] takes, where `None` *is* the
+/// clear. `/name-window` wraps this in an enum because it dispatches two
+/// different actions; this command sets one field, so an enum here would only
+/// be an `Option` that gets unwrapped a line later.
+fn parse_rename_pane_argument(argument: Option<&str>) -> Result<Option<String>, &'static str> {
+    let Some(name) = argument.map(str::trim).filter(|name| !name.is_empty()) else {
+        return Err("Usage: /rename-pane <name> or /rename-pane --clear");
+    };
+
+    Ok((name != "--clear").then(|| name.to_owned()))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RenameTabColorCommandArgument {
     Set { slot: TabColorSlot, label: String },
@@ -652,6 +669,20 @@ impl Input {
                     }
                     Ok(NameWindowCommandArgument::Clear) => {
                         ctx.dispatch_typed_action(&WorkspaceAction::ResetActiveWindowName);
+                    }
+                    Err(message) => {
+                        show_error_toast(message.to_owned(), ctx);
+                        return true;
+                    }
+                }
+            }
+            _ if command.name == commands::RENAME_PANE.name => {
+                match parse_rename_pane_argument(argument.map(String::as_str)) {
+                    Ok(name) => {
+                        // The pane this input belongs to — not the focused one.
+                        // See `WorkspaceAction::SetPaneName`.
+                        let pane_id = self.focus_handle.as_ref().map(|handle| handle.pane_id());
+                        ctx.dispatch_typed_action(&WorkspaceAction::SetPaneName { pane_id, name });
                     }
                     Err(message) => {
                         show_error_toast(message.to_owned(), ctx);

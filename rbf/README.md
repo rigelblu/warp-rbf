@@ -46,6 +46,12 @@ This is my ~~fork~~ flavour of [Warp](https://github.com/warpdotdev/Warp), simil
   - `/name-window <name>`
   - `/name-window --clear`
 
+**Name a pane**
+- Give a pane a persistent name that shows on the pane's own header, not just in the vertical tabs panel — so an agent, a server, and a jj pane stop reading as three near-identical shell titles.
+  - `/rename-pane <name>`
+  - `/rename-pane --clear` puts it back to the live terminal title
+  - The name belongs to the pane, so it survives the shell exiting, respawning, and a restart
+
 **Rename tab color slots**
 — label the six tab colors for what they mean in your workflow (e.g. "default" → `INACTIVE`, "blue"  → `PRIMARY`) instead of memorizing colors.
   - `/rename-tab-color <color> <label>`

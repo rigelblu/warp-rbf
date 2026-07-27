@@ -456,9 +456,9 @@ fn set_pane_name(
         };
         pane.pane_configuration().update(ctx, |configuration, ctx| {
             if let Some(title) = title {
-                configuration.set_custom_vertical_tabs_title(title, ctx);
+                configuration.set_custom_name(title, ctx);
             } else {
-                configuration.clear_custom_vertical_tabs_title(ctx);
+                configuration.clear_custom_name(ctx);
             }
         });
         ctx.emit(crate::pane_group::Event::AppStateChanged);

@@ -128,6 +128,15 @@ pub static EDIT: LazyLock<StaticCommand> = LazyLock::new(|| StaticCommand {
     ),
 });
 
+pub static RENAME_PANE: LazyLock<StaticCommand> = LazyLock::new(|| StaticCommand {
+    name: "/rename-pane",
+    description: "Rename the current pane",
+    icon_path: "bundled/svg/pencil-line.svg",
+    availability: Availability::ALWAYS,
+    auto_enter_ai_mode: false,
+    argument: Some(Argument::required().with_hint_text("<name | --clear>")),
+});
+
 pub static RENAME_TAB: LazyLock<StaticCommand> = LazyLock::new(|| StaticCommand {
     name: "/rename-tab",
     description: "Rename the current tab",
@@ -657,6 +666,7 @@ fn all_commands() -> Vec<StaticCommand> {
         PLAN.clone(),
         RENAME_CONVERSATION.clone(),
         NAME_WINDOW.clone(),
+        RENAME_PANE.clone(),
         RENAME_TAB_COLOR.clone(),
         RENAME_TAB.clone(),
         SET_TAB_COLOR.clone(),

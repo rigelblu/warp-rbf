@@ -1,8 +1,8 @@
 use warp_core::ui::theme::AnsiColorIdentifier;
 
 use super::{
-    parse_name_window_argument, parse_rename_tab_color_argument, parse_set_tab_color_argument,
-    NameWindowCommandArgument, RenameTabColorCommandArgument,
+    parse_name_window_argument, parse_rename_pane_argument, parse_rename_tab_color_argument,
+    parse_set_tab_color_argument, NameWindowCommandArgument, RenameTabColorCommandArgument,
 };
 use crate::features::FeatureFlag;
 use crate::search::slash_command_menu::static_commands::{commands, Availability};
@@ -40,6 +40,32 @@ fn name_window_argument_clears_only_on_exact_clear_flag() {
 fn name_window_argument_rejects_missing_or_blank_name() {
     assert!(parse_name_window_argument(None).is_err());
     assert!(parse_name_window_argument(Some("   ")).is_err());
+}
+
+#[test]
+fn rename_pane_argument_sets_trimmed_name() {
+    assert_eq!(
+        parse_rename_pane_argument(Some("  API server  ")),
+        Ok(Some("API server".to_string()))
+    );
+}
+
+#[test]
+fn rename_pane_argument_clears_only_on_exact_clear_flag() {
+    // `Ok(None)` is the clear — it is what `SetPaneName { name }` takes.
+    assert_eq!(parse_rename_pane_argument(Some("--clear")), Ok(None));
+    assert_eq!(
+        parse_rename_pane_argument(Some("--clear later")),
+        Ok(Some("--clear later".to_string()))
+    );
+}
+
+#[test]
+fn rename_pane_argument_rejects_missing_or_blank_name() {
+    // Blank is an error, not a clear — an empty pane header is strictly worse
+    // than the live title, and clearing is spelled `--clear`.
+    assert!(parse_rename_pane_argument(None).is_err());
+    assert!(parse_rename_pane_argument(Some("   ")).is_err());
 }
 
 #[test]

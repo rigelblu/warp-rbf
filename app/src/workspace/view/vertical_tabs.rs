@@ -3801,11 +3801,7 @@ impl<'a> PaneProps<'a> {
             title: display_title,
             subtitle: display_subtitle,
             custom_vertical_tabs_title: include_custom_vertical_tabs_title
-                .then(|| {
-                    pane_configuration
-                        .custom_vertical_tabs_title()
-                        .map(str::to_owned)
-                })
+                .then(|| pane_configuration.custom_name().map(str::to_owned))
                 .flatten(),
             display_title_override,
             is_focused: pane_group.focused_pane_id(app) == pane_id,

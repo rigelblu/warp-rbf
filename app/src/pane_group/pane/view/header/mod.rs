@@ -1128,7 +1128,9 @@ fn render_draggable_placeholder_element(
     pane_configuration: ModelHandle<PaneConfiguration>,
     app: &AppContext,
 ) -> Box<dyn Element> {
-    let title = pane_configuration.as_ref(app).title().to_owned();
+    // `display_name()`, matching the header this ghost stands in for — dragging
+    // a renamed pane must not reveal the live title underneath it (#warp-49).
+    let title = pane_configuration.as_ref(app).display_name().to_owned();
     let title_secondary = pane_configuration.as_ref(app).title_secondary().to_owned();
     let appearance = Appearance::as_ref(app);
 

@@ -126,7 +126,7 @@ fn set_active_pane_name(name: &'static str) -> TestStep {
                 .pane_by_id(pane_id)
                 .expect("focused pane should exist");
             pane.pane_configuration().update(ctx, |configuration, ctx| {
-                configuration.set_custom_vertical_tabs_title(name, ctx);
+                configuration.set_custom_name(name, ctx);
             });
         });
     })
